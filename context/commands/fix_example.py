@@ -247,43 +247,46 @@ def example_basic_fix():
 def example_loop_mode():
     """
     Example 2: Fix command with loop mode.
-    
+
     Loop mode enables iterative fixing where the command will:
     1. Attempt to fix the code
     2. Run the verification program to check if the fix worked
     3. If still failing, attempt another fix
     4. Continue until success, max-attempts reached, or budget exhausted
-    
+
+    NOTE: In loop mode, ERROR_FILE is NOT provided - errors are auto-generated
+    by the verification program.
+
     Parameters:
     - --loop: Enable iterative fixing
-    - --verification-program: Program to verify the fix worked
+    - --verification-program: Program to verify the fix worked (REQUIRED in loop mode)
     - --max-attempts: Maximum number of fix attempts (default: 3)
     - --budget: Maximum cost in USD allowed for fixing (default: 5.0)
     """
     print("\n" + "="*60)
     print("Example 2: Fix Command with Loop Mode")
     print("="*60)
-    
+
     cli = create_cli_group()
     runner = CliRunner()
-    
+
     result = runner.invoke(cli, [
         '--force',
         '--strength', '0.7',
         'fix',
+        '--loop',
+        '--verification-program', './output/examples/verify_calculator.py',
         './output/prompts/calculator_python.prompt',
         './output/src/calculator.py',
         './output/tests/test_calculator.py',
-        './output/errors/test_errors.log',
-        '--loop',
-        '--verification-program', './output/examples/verify_calculator.py',
+        # NOTE: No error_file in loop mode - errors are auto-generated
         '--max-attempts', '5',
         '--budget', '2.5',
         '--output-code', './output/src/calculator_loop_fixed.py',
         '--output-test', './output/tests/test_calculator_loop_fixed.py',
         '--output-results', './output/results/fix_loop_results.log'
     ])
-    
+
     print(f"Exit code: {result.exit_code}")
     print(f"Output: {result.output}")
 
@@ -291,15 +294,15 @@ def example_loop_mode():
 def example_with_agentic_fallback():
     """
     Example 3: Fix command with agentic fallback enabled.
-    
+
     When the standard iterative fix process fails, agentic fallback
     invokes a project-aware CLI agent (Claude, Gemini, or Codex)
     to attempt a fix with broader context.
-    
+
     Prerequisites for agentic fallback:
     - One of: claude, gemini, or codex CLI installed
     - Corresponding API key set (ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY)
-    
+
     Parameters:
     - --agentic-fallback: Enable agentic fallback (default when --loop is set)
     - --no-agentic-fallback: Disable agentic fallback
@@ -307,19 +310,20 @@ def example_with_agentic_fallback():
     print("\n" + "="*60)
     print("Example 3: Fix Command with Agentic Fallback")
     print("="*60)
-    
+
     cli = create_cli_group()
     runner = CliRunner()
-    
+
     result = runner.invoke(cli, [
         '--force',
         '--strength', '0.8',
         'fix',
+        '--loop',
+        '--verification-program', './output/examples/verify_calculator.py',
         './output/prompts/calculator_python.prompt',
         './output/src/calculator.py',
         './output/tests/test_calculator.py',
-        './output/errors/test_errors.log',
-        '--loop',
+        # NOTE: No error_file in loop mode
         '--agentic-fallback',
         '--max-attempts', '3',
         '--budget', '10.0',
@@ -327,7 +331,7 @@ def example_with_agentic_fallback():
         '--output-test', './output/tests/test_calculator_agentic_fixed.py',
         '--output-results', './output/results/fix_agentic_results.log'
     ])
-    
+
     print(f"Exit code: {result.exit_code}")
     print(f"Output: {result.output}")
 
@@ -335,36 +339,37 @@ def example_with_agentic_fallback():
 def example_with_auto_submit():
     """
     Example 4: Fix command with auto-submit.
-    
+
     When --auto-submit is enabled and all unit tests pass during
     the fix loop, the example is automatically submitted to the
     PDD Cloud platform to improve the example database.
-    
+
     Parameters:
     - --auto-submit: Automatically submit if all tests pass
     """
     print("\n" + "="*60)
     print("Example 4: Fix Command with Auto-Submit")
     print("="*60)
-    
+
     cli = create_cli_group()
     runner = CliRunner()
-    
+
     result = runner.invoke(cli, [
         '--force',
         'fix',
+        '--loop',
+        '--verification-program', './output/examples/verify_calculator.py',
         './output/prompts/calculator_python.prompt',
         './output/src/calculator.py',
         './output/tests/test_calculator.py',
-        './output/errors/test_errors.log',
-        '--loop',
+        # NOTE: No error_file in loop mode
         '--auto-submit',
         '--max-attempts', '3',
         '--budget', '5.0',
         '--output-code', './output/src/calculator_auto_fixed.py',
         '--output-test', './output/tests/test_calculator_auto_fixed.py'
     ])
-    
+
     print(f"Exit code: {result.exit_code}")
     print(f"Output: {result.output}")
 
@@ -372,7 +377,7 @@ def example_with_auto_submit():
 def example_with_cost_tracking():
     """
     Example 5: Fix command with cost tracking.
-    
+
     Using --output-cost at the CLI group level enables cost tracking.
     A CSV file is generated with columns:
     - timestamp: When the command was executed
@@ -393,11 +398,12 @@ def example_with_cost_tracking():
         '--force',
         '--output-cost', './output/results/fix_costs.csv',
         'fix',
+        '--loop',
+        '--verification-program', './output/examples/verify_calculator.py',
         './output/prompts/calculator_python.prompt',
         './output/src/calculator.py',
         './output/tests/test_calculator.py',
-        './output/errors/test_errors.log',
-        '--loop',
+        # NOTE: No error_file in loop mode
         '--max-attempts', '3',
         '--budget', '5.0',
         '--output-code', './output/src/calculator_cost_fixed.py',
@@ -477,26 +483,36 @@ def example_programmatic_usage():
 def main():
     """
     Main function demonstrating various fix command usage patterns.
-    
+
     The fix command is used to automatically fix errors in generated code
     and unit tests. It reads error messages and the original prompt to
     understand the intended behavior, then generates corrected code.
-    
+
     Command-line usage:
-        pdd fix <prompt_file> <code_file> <unit_test_file> <error_file> [OPTIONS]
-    
-    Required arguments:
+        # Non-loop mode (requires ERROR_FILE):
+        pdd fix <prompt_file> <code_file> <unit_test_file>... <error_file> [OPTIONS]
+
+        # Loop mode (NO error_file - errors auto-generated):
+        pdd fix --loop --verification-program <path> <prompt_file> <code_file> <unit_test_file>... [OPTIONS]
+
+    Required arguments (non-loop):
         prompt_file     - Path to the original prompt file
         code_file       - Path to the code file to fix
-        unit_test_file  - Path to the unit test file
-        error_file      - Path to the file containing error messages
-    
+        unit_test_file  - Path to the unit test file(s)
+        error_file      - Path to the file containing error messages (REQUIRED in non-loop mode)
+
+    Required arguments (loop mode):
+        prompt_file     - Path to the original prompt file
+        code_file       - Path to the code file to fix
+        unit_test_file  - Path to the unit test file(s)
+        --verification-program  - Program to verify fixes (REQUIRED in loop mode, NO error_file)
+
     Common options:
         --output-code PATH       - Path for the fixed code file
         --output-test PATH       - Path for the fixed test file
         --output-results PATH    - Path for the results log
         --loop                   - Enable iterative fixing
-        --verification-program   - Program to verify fixes in loop mode
+        --verification-program   - Program to verify fixes in loop mode (REQUIRED with --loop)
         --max-attempts N         - Maximum fix attempts (default: 3)
         --budget FLOAT           - Maximum cost in USD (default: 5.0)
         --agentic-fallback       - Enable agentic fallback for complex errors

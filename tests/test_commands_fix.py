@@ -197,7 +197,7 @@ sys.exit(0 if test_result.wasSuccessful() else 1)
     # Change working directory to tmp_path so imports work correctly
     original_cwd = os.getcwd()
     os.chdir(tmp_path)
-    
+
     # Set PDD_PATH to the project root so prompt templates can be found
     # Get the project root dynamically from the current test file location
     original_pdd_path = os.getenv('PDD_PATH')
@@ -258,7 +258,7 @@ sys.exit(0 if test_result.wasSuccessful() else 1)
         else:
              if 'PDD_PATH' in os.environ:
                  del os.environ['PDD_PATH']
-        
+
         # Restore original working directory
         os.chdir(original_cwd)
 
@@ -341,7 +341,7 @@ def test_cli_fix_multiple_test_files(tmp_path):
             loop=False,
             verification_program=None,
             max_attempts=3,
-            budget=5.0,
+            budget=ANY, 
             auto_submit=False,
             agentic_fallback=True,
         )
@@ -357,7 +357,130 @@ def test_cli_fix_multiple_test_files(tmp_path):
             loop=False,
             verification_program=None,
             max_attempts=3,
-            budget=5.0,
+            budget=ANY,  # Budget is tracked and adjusted per iteration
             auto_submit=False,
             agentic_fallback=True,
         )
+
+
+def test_fix_loop_mode_should_not_accept_error_file(tmp_path):
+    """Test that fix command in --loop mode should NOT accept ERROR_FILE argument."""
+    runner = CliRunner()
+
+    prompt_file = tmp_path / "prompt.prompt"
+    prompt_file.write_text("prompt content")
+    code_file = tmp_path / "code.py"
+    code_file.write_text("code content")
+    test_file = tmp_path / "test.py"
+    test_file.write_text("test content")
+    verification_program = tmp_path / "verify.py"
+    verification_program.write_text("verification content")
+
+    # In loop mode, should work WITHOUT error_file
+    with patch('pdd.commands.fix.fix_main') as mock_fix_main:
+        mock_fix_main.return_value = (True, "fixed_test", "fixed_code", 1, 0.1, "gpt-4")
+        result = runner.invoke(cli.cli, [
+            'fix',
+            '--loop',
+            '--verification-program', str(verification_program),
+            str(prompt_file),
+            str(code_file),
+            str(test_file),
+            # NO error_file here
+        ])
+        assert result.exit_code == 0, f"Loop mode should work without error_file. Output: {result.output}"
+        # Verify error_file is empty string or not provided
+        mock_fix_main.assert_called_once()
+        call_args = mock_fix_main.call_args[1]
+        assert call_args['error_file'] == "", f"In loop mode, error_file should be empty string, got: {call_args['error_file']}"
+
+
+def test_fix_loop_mode_with_multiple_test_files(tmp_path):
+    """Test that fix command in --loop mode treats all files after CODE as test files."""
+    runner = CliRunner()
+
+    prompt_file = tmp_path / "prompt.prompt"
+    prompt_file.write_text("prompt content")
+    code_file = tmp_path / "code.py"
+    code_file.write_text("code content")
+    test_file_1 = tmp_path / "test1.py"
+    test_file_1.write_text("test 1 content")
+    test_file_2 = tmp_path / "test2.py"
+    test_file_2.write_text("test 2 content")
+    verification_program = tmp_path / "verify.py"
+    verification_program.write_text("verification content")
+
+    # In loop mode, all files after CODE_FILE are treated as test files
+    with patch('pdd.commands.fix.fix_main') as mock_fix_main:
+        mock_fix_main.return_value = (True, "fixed_test", "fixed_code", 1, 0.1, "gpt-4")
+        result = runner.invoke(cli.cli, [
+            'fix',
+            '--loop',
+            '--verification-program', str(verification_program),
+            str(prompt_file),
+            str(code_file),
+            str(test_file_1),
+            str(test_file_2),  # Both files should be treated as test files
+        ])
+        assert result.exit_code == 0, f"Loop mode with multiple test files should work. Output: {result.output}"
+        # Verify both test files were processed
+        assert mock_fix_main.call_count == 2, f"Expected 2 calls to fix_main (one per test file), got {mock_fix_main.call_count}"
+        # Verify error_file is empty string for both calls
+        for call in mock_fix_main.call_args_list:
+            call_args = call[1]
+            assert call_args['error_file'] == "", f"In loop mode, error_file should be empty string, got: {call_args['error_file']}"
+
+
+def test_fix_non_loop_mode_requires_error_file(tmp_path):
+    """Test that fix command in non-loop mode REQUIRES ERROR_FILE argument."""
+    runner = CliRunner()
+
+    prompt_file = tmp_path / "prompt.prompt"
+    prompt_file.write_text("prompt content")
+    code_file = tmp_path / "code.py"
+    code_file.write_text("code content")
+    test_file = tmp_path / "test.py"
+    test_file.write_text("test content")
+
+    # In non-loop mode, omitting error_file should fail
+    result = runner.invoke(cli.cli, [
+        'fix',
+        str(prompt_file),
+        str(code_file),
+        str(test_file),
+        # NO error_file - should fail
+    ])
+    assert result.exit_code != 0, f"Non-loop mode without error_file should fail. Output: {result.output}"
+    assert "missing" in result.output.lower() or "required" in result.output.lower() or "requires" in result.output.lower(), \
+        f"Error message should indicate missing required argument. Output: {result.output}"
+
+
+def test_fix_non_loop_mode_works_with_error_file(tmp_path):
+    """Test that fix command in non-loop mode works WITH ERROR_FILE argument."""
+    runner = CliRunner()
+
+    prompt_file = tmp_path / "prompt.prompt"
+    prompt_file.write_text("prompt content")
+    code_file = tmp_path / "code.py"
+    code_file.write_text("code content")
+    test_file = tmp_path / "test.py"
+    test_file.write_text("test content")
+    error_file = tmp_path / "error.txt"
+    error_file.write_text("error content")
+
+    # In non-loop mode, should work WITH error_file
+    with patch('pdd.commands.fix.fix_main') as mock_fix_main:
+        mock_fix_main.return_value = (True, "fixed_test", "fixed_code", 1, 0.1, "gpt-4")
+        result = runner.invoke(cli.cli, [
+            'fix',
+            str(prompt_file),
+            str(code_file),
+            str(test_file),
+            str(error_file),
+        ])
+        assert result.exit_code == 0, f"Non-loop mode with error_file should work. Output: {result.output}"
+        # Verify error_file is properly passed
+        mock_fix_main.assert_called_once()
+        call_args = mock_fix_main.call_args[1]
+        assert call_args['error_file'] == str(error_file), \
+            f"In non-loop mode, error_file should be passed correctly, got: {call_args['error_file']}"
