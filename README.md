@@ -1458,14 +1458,6 @@ pdd [GLOBAL OPTIONS] preprocess --output preprocessed/factorial_calculator_pytho
 
 Fix errors in code and unit tests based on error messages and the original prompt file.
 
-```
-# Non-loop mode (requires ERROR_FILE):
-pdd [GLOBAL OPTIONS] fix [OPTIONS] PROMPT_FILE CODE_FILE UNIT_TEST_FILE... ERROR_FILE
-
-# Loop mode (ERROR_FILE not used):
-pdd [GLOBAL OPTIONS] fix --loop --verification-program PATH [OPTIONS] PROMPT_FILE CODE_FILE UNIT_TEST_FILE...
-```
-
 Arguments:
 - `PROMPT_FILE`: The filename of the prompt file that generated the code under test.
 - `CODE_FILE`: The filename of the code file to be fixed.
