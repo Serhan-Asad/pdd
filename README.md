@@ -1299,19 +1299,23 @@ pdd [GLOBAL OPTIONS] example --output examples/factorial_calculator_example.py f
 
 ### 4. test
 
-Generate or enhance unit tests for a given code file and its corresponding prompt file.
+Generate or enhance unit tests for a given code file and its corresponding prompt file, or generate tests from a prompt and example file (Test-Driven Development style).
 
 Test organization:
 - For each target `<basename>`, PDD maintains a single test file (by default named `test_<basename>.<language_extension>` and typically placed under a tests directory).
 - New tests accumulate in that same file over time rather than being regenerated from scratch. When augmenting tests, PDD can merge additions into the existing file (see `--merge`).
 
 ```
-pdd [GLOBAL OPTIONS] test [OPTIONS] PROMPT_FILE CODE_FILE
+pdd [GLOBAL OPTIONS] test [OPTIONS] PROMPT_FILE CODE_OR_EXAMPLE_FILE
 ```
 
 Arguments:
-- `PROMPT_FILE`: The filename of the prompt file that generated the code.
-- `CODE_FILE`: The filename of the code file to be tested.
+- `PROMPT_FILE`: The filename of the prompt file that describes the intended behavior.
+- `CODE_OR_EXAMPLE_FILE`: The filename of either:
+  - **Implementation file**: The actual code to be tested (traditional workflow)
+  - **Example file**: A file demonstrating the intended interface/API (TDD workflow)
+
+  Files with names ending in `_example` (e.g., `calculator_example.py`) are automatically treated as example files for TDD-style test generation. In this mode, tests are generated based on the prompt's intent and the example's demonstrated interface, allowing you to write tests before implementing code.
 
 Options:
 - `--output LOCATION`: Specify where to save the generated test file. The default file name is `test_<basename>.<language_file_extension>`. If an output file with the specified name already exists, a new file with a numbered suffix (e.g., `test_calculator_1.py`) will be created instead of overwriting.
@@ -1341,17 +1345,23 @@ could influence the output of the `pdd test` command when run in the same direct
 
 #### Basic Examples:
 
-1. Generate initial unit tests:
+1. Generate initial unit tests from implementation:
 ```
 pdd [GLOBAL OPTIONS] test --output tests/test_factorial_calculator.py factorial_calculator_python.prompt src/factorial_calculator.py
 ```
 
-2. Generate additional tests to improve coverage (with multiple existing test files):
+2. **Test-Driven Development**: Generate tests from prompt and example (before implementation exists):
+```
+pdd [GLOBAL OPTIONS] test --output tests/test_calculator.py calculator_python.prompt examples/calculator_example.py
+```
+This generates tests based on the prompt's intent and the example's demonstrated interface. The `_example.py` suffix triggers TDD mode automatically.
+
+3. Generate additional tests to improve coverage (with multiple existing test files):
 ```
 pdd [GLOBAL OPTIONS] test --coverage-report coverage.xml --existing-tests tests/test_calculator.py --existing-tests tests/test_calculator_edge_cases.py --output tests/test_calculator_enhanced.py calculator_python.prompt src/calculator.py
 ```
 
-3. Improve coverage and merge with existing tests:
+4. Improve coverage and merge with existing tests:
 ```
 pdd [GLOBAL OPTIONS] test --coverage-report coverage.xml --existing-tests tests/test_calculator.py --merge --target-coverage 95.0 calculator_python.prompt src/calculator.py
 ```

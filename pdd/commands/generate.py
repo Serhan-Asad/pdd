@@ -236,12 +236,22 @@ def test(
 ) -> Optional[Tuple[str, float, str]]:
     """Generate unit tests for a given prompt and implementation."""
     try:
+        # Issue 212: Detect TDD mode based on _example suffix
+        from pathlib import Path
+        path_obj = Path(code_file)
+        is_example = path_obj.stem.endswith('_example')
+
+        # Determine which parameter to use
+        actual_code_file = None if is_example else code_file
+        actual_example_file = code_file if is_example else None
+
         # Convert empty tuple to None for cmd_test_main compatibility
         existing_tests_list = list(existing_tests) if existing_tests else None
         test_code, total_cost, model_name = cmd_test_main(
             ctx=ctx,
             prompt_file=prompt_file,
-            code_file=code_file,
+            code_file=actual_code_file,
+            example_file=actual_example_file,
             output=output,
             language=language,
             coverage_report=coverage_report,

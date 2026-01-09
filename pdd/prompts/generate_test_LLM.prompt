@@ -1,12 +1,14 @@
-% You are an expert Software Test Engineer. Your goal is to generate tests that ensures correct functionality of the code under test.
+% You are an expert Software Test Engineer. Your goal is to generate tests that ensure correct functionality.
 
 % Here a description of what the code is supposed to do and was the prompt that generated the code: <prompt_that_generated_code>{prompt_that_generated_code}</prompt_that_generated_code>
 
-% Here is the code under test: <code_under_test>{code}</code_under_test>
+% Here is the code under test (if provided): <code_under_test>{code}</code_under_test>
+
+% Here is an example file showing how the module should be used (if provided): <example_usage>{example}</example_usage>
 
 % File path information:
- - The code under test module file is located at: <code_under_test_file_path>{source_file_path}</code_under_test_file_path>
- - The example file will be saved at: <test_file_path>{test_file_path}</test_file_path>
+ - The source file is located at: <source_file_path>{source_file_path}</source_file_path>
+ - The test file will be saved at: <test_file_path>{test_file_path}</test_file_path>
  - The module name (without extension) is: <module_name>{module_name}</module_name>
 
 % EXISTING TESTS (if provided - your output will be APPENDED to this file):
@@ -19,11 +21,21 @@
     - Maintain consistent style with existing tests (fixtures, naming conventions)
     - Focus on testing functionality NOT already covered by existing tests
 
+% MODE DETECTION:
+    - If <code_under_test> contains code: This is TRADITIONAL MODE - tests are for existing implementation
+    - If <example_usage> contains code: This is TDD MODE - tests are for intended behavior BEFORE implementation exists
+
 % Follow these rules:
-    - CRITICAL: You MUST analyze the actual code provided in code_under_test and generate tests for the EXACT functions defined in that code
-    - CRITICAL: Import statements must use the ACTUAL module name from the code file path, not generic names. Include the necessary code/path info to import the code under test.
-    - CRITICAL: Test the ACTUAL function names, parameters, and behavior shown in the provided code
-    - The module name for the code under test will have the same name as the function name
+    - CRITICAL: If in TRADITIONAL MODE (code provided):
+        * You MUST analyze the actual code in code_under_test and generate tests for the EXACT functions defined
+        * Test the ACTUAL function names, parameters, and behavior shown in the provided code
+        * Focus on code coverage of the implementation
+    - CRITICAL: If in TDD MODE (example provided):
+        * Analyze the example to understand the PUBLIC INTERFACE (imports, function signatures, usage patterns)
+        * Analyze the prompt to understand the INTENDED BEHAVIOR (what code should do, edge cases, requirements)
+        * Generate tests BEFORE implementation exists - you're testing the contract/specification
+        * Import statements must use the ACTUAL module name (from module_name parameter, NOT the example file name)
+    - CRITICAL: Import statements must use the ACTUAL module name from module_name parameter
     - The unit test should be in {language}. If Python, use pytest.
     - Use individual test functions for each case to make it easier to identify which specific cases pass or fail.
     - Use the description of the functionality in the prompt to generate tests with useful tests with good code coverage.
@@ -35,17 +47,24 @@
 <include>./context/test.prompt</include>
 
 <instructions>
-    1. FIRST: Carefully analyze the ACTUAL code provided in code_under_test:
-        - Identify the EXACT function names defined in the code
-        - Identify the EXACT parameters and their types
-        - Identify the EXACT return values and behavior
-        - Identify any error conditions or edge cases
-    2. SECOND: Analyze the prompt that generated the code to understand the intended functionality and edge cases.
+    1. FIRST: Determine which mode you're in:
+        - If <code_under_test> has content: TRADITIONAL MODE - analyze the ACTUAL code:
+            * Identify the EXACT function names defined in the code
+            * Identify the EXACT parameters and their types
+            * Identify the EXACT return values and behavior
+            * Identify any error conditions or edge cases
+        - If <example_usage> has content: TDD MODE - analyze the EXAMPLE and PROMPT:
+            * How to import the module (exact import statements from example)
+            * What functions/classes are exposed in the example
+            * How they are called (parameters, return values shown in example)
+            * What the code SHOULD do (from prompt description)
+            * Edge cases and error conditions from the prompt
+    2. SECOND: Analyze the prompt that generated/will generate the code to understand the intended functionality and edge cases.
     3. THIRD: For each edge case explain whether it is better to do the test using Z3 formal verification or unit tests.
-    4. FOURTH: Develop a detailed test plan that will ensure the code under test is correct. This should involve both Z3 formal verification and unit tests.
+    4. FOURTH: Develop a detailed test plan. This should involve both Z3 formal verification and unit tests.
     5. FIFTH: Write the test file with:
-        a) The first part of the test file should be the detailed test plan from step 4 above in comments. 
-        b) Import statements using the ACTUAL module name from the code file path (e.g., if code is in "my_function.py", use "from my_function import function_name")
-        c) Tests for the ACTUAL function names and behavior shown in the provided code
+        a) The first part of the test file should be the detailed test plan from step 4 above in comments.
+        b) Import statements using the ACTUAL module name from the module_name parameter
+        c) Tests for the functions and behavior (either ACTUAL from code, or INTENDED from example+prompt)
         d) Z3 formal verification tests that are runnable as unit tests.
 </instructions>

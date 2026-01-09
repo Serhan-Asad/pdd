@@ -207,3 +207,140 @@ def add(a, b):
         print(f"Successfully generated code at {output_path}")
     except Exception as e:
         pytest.fail(f"Real generation test failed: {e}")
+
+
+# -----------------------------------------------------------------------------
+# Issue 212: TDD Mode Tests - Example File Detection and Routing
+# -----------------------------------------------------------------------------
+
+@patch('pdd.core.cli.auto_update')
+@patch('pdd.commands.generate.cmd_test_main')
+def test_cli_test_detects_example_file_suffix(mock_cmd_test_main, mock_auto_update, runner, tmp_path):
+    """
+    Test that files ending with '_example' are detected and routed to TDD mode.
+
+    Issue 212: TDD workflow should auto-detect example files by _example suffix.
+    """
+    # Create example file
+    prompt_file = tmp_path / "calculator.prompt"
+    prompt_file.write_text("Create a calculator with add/subtract/divide functions")
+
+    example_file = tmp_path / "calculator_example.py"
+    example_file.write_text("from calculator import add\nresult = add(5, 3)")
+
+    mock_cmd_test_main.return_value = ("test_code", 0.05, "test_model")
+
+    result = runner.invoke(
+        cli.cli,
+        ["test", str(prompt_file), str(example_file)]
+    )
+
+    assert result.exit_code == 0
+    mock_cmd_test_main.assert_called_once()
+
+    # Verify TDD mode was used (example_file set, code_file is None)
+    call_kwargs = mock_cmd_test_main.call_args.kwargs
+    assert call_kwargs["example_file"] == str(example_file), \
+        "Files with _example suffix should be passed as example_file"
+    assert call_kwargs["code_file"] is None, \
+        "code_file should be None in TDD mode"
+
+
+@patch('pdd.core.cli.auto_update')
+@patch('pdd.commands.generate.cmd_test_main')
+def test_cli_test_traditional_mode_without_example_suffix(mock_cmd_test_main, mock_auto_update, runner, tmp_path):
+    """
+    Test that files WITHOUT '_example' suffix use traditional mode.
+
+    Issue 212: Traditional workflow should still work for normal code files.
+    """
+    # Create regular code file (no _example suffix)
+    prompt_file = tmp_path / "calculator.prompt"
+    prompt_file.write_text("Create a calculator with add/subtract/divide functions")
+
+    code_file = tmp_path / "calculator.py"
+    code_file.write_text("def add(a, b):\n    return a + b")
+
+    mock_cmd_test_main.return_value = ("test_code", 0.05, "test_model")
+
+    result = runner.invoke(
+        cli.cli,
+        ["test", str(prompt_file), str(code_file)]
+    )
+
+    assert result.exit_code == 0
+    mock_cmd_test_main.assert_called_once()
+
+    # Verify traditional mode was used (code_file set, example_file is None)
+    call_kwargs = mock_cmd_test_main.call_args.kwargs
+    assert call_kwargs["code_file"] == str(code_file), \
+        "Files without _example suffix should be passed as code_file"
+    assert call_kwargs["example_file"] is None, \
+        "example_file should be None in traditional mode"
+
+
+@patch('pdd.core.cli.auto_update')
+@patch('pdd.commands.generate.cmd_test_main')
+def test_cli_test_example_suffix_case_sensitive(mock_cmd_test_main, mock_auto_update, runner, tmp_path):
+    """
+    Test that _example suffix detection is case-sensitive.
+
+    Issue 212: Only lowercase '_example' should trigger TDD mode.
+    """
+    prompt_file = tmp_path / "test.prompt"
+    prompt_file.write_text("Test prompt")
+
+    # Test with uppercase - should NOT trigger TDD mode
+    file_uppercase = tmp_path / "test_EXAMPLE.py"
+    file_uppercase.write_text("code")
+
+    mock_cmd_test_main.return_value = ("test_code", 0.05, "test_model")
+
+    result = runner.invoke(
+        cli.cli,
+        ["test", str(prompt_file), str(file_uppercase)]
+    )
+
+    assert result.exit_code == 0
+    call_kwargs = mock_cmd_test_main.call_args.kwargs
+
+    # Should use traditional mode (code_file) because uppercase EXAMPLE
+    assert call_kwargs["code_file"] == str(file_uppercase)
+    assert call_kwargs["example_file"] is None
+
+
+@patch('pdd.core.cli.auto_update')
+@patch('pdd.commands.generate.cmd_test_main')
+def test_cli_test_example_suffix_multiple_extensions(mock_cmd_test_main, mock_auto_update, runner, tmp_path):
+    """
+    Test _example suffix works with various file extensions.
+
+    Issue 212: Should detect _example in the filename stem, not extension.
+    """
+    prompt_file = tmp_path / "test.prompt"
+    prompt_file.write_text("Test prompt")
+
+    mock_cmd_test_main.return_value = ("test_code", 0.05, "test_model")
+
+    # Test various extensions
+    test_files = [
+        "module_example.py",
+        "module_example.js",
+        "module_example.java",
+        "module_example.ts",
+    ]
+
+    for filename in test_files:
+        file_path = tmp_path / filename
+        file_path.write_text("example code")
+
+        result = runner.invoke(
+            cli.cli,
+            ["test", str(prompt_file), str(file_path)]
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_cmd_test_main.call_args.kwargs
+        assert call_kwargs["example_file"] == str(file_path), \
+            f"{filename} should be detected as example file"
+        assert call_kwargs["code_file"] is None

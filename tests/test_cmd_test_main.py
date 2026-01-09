@@ -1045,6 +1045,257 @@ def test_cmd_test_main_cloud_insufficient_credits_displays_balance(
             f"Expected balance/cost info in output. Got: {printed_messages}"
 
 
+# -----------------------------------------------------------------------------
+# Issue 212: TDD Mode Tests - Example File Handling and Module Name Stripping
+# -----------------------------------------------------------------------------
+
+def test_cmd_test_main_tdd_mode_with_example_file(mock_ctx_fixture, tmp_path):
+    """
+    Test TDD mode: cmd_test_main should accept example_file and pass it to generate_test.
+
+    Issue 212: TDD workflow uses example files instead of code files.
+    """
+    prompt_file = tmp_path / "calculator.prompt"
+    prompt_file.write_text("Create a calculator module")
+
+    example_file = tmp_path / "calculator_example.py"
+    example_file.write_text("from calculator import add\nresult = add(5, 3)")
+
+    output_file = tmp_path / "test_calculator.py"
+
+    with patch("pdd.cmd_test_main.construct_paths") as mock_construct_paths, \
+         patch("pdd.cmd_test_main.generate_test") as mock_generate_test, \
+         patch("builtins.open", mock_open()):
+
+        mock_construct_paths.return_value = (
+            {},  # resolved_config
+            {
+                "prompt_file": "prompt_contents",
+                "example_file": str(example_file),  # Note: example_file key, not code_file
+            },
+            {"output": str(output_file)},
+            "python"
+        )
+        mock_generate_test.return_value = ("test_code", 0.05, "test_model")
+
+        result = cmd_test_main(
+            ctx=mock_ctx_fixture,
+            prompt_file=str(prompt_file),
+            code_file=None,  # No code file in TDD mode
+            example_file=str(example_file),  # Example file provided
+            output=str(output_file),
+            language=None,
+            coverage_report=None,
+            existing_tests=None,
+            target_coverage=None,
+            merge=False,
+        )
+
+        # Verify generate_test was called with example parameter (not code)
+        mock_generate_test.assert_called_once()
+        call_kwargs = mock_generate_test.call_args.kwargs
+        assert "example" in call_kwargs, "TDD mode should pass 'example' parameter"
+        assert call_kwargs.get("code") is None, "TDD mode should NOT pass 'code' parameter"
+        assert result == ("test_code", 0.05, "test_model")
+
+
+def test_cmd_test_main_mutual_exclusivity_both_provided(mock_ctx_fixture, tmp_path):
+    """
+    Test that providing both code_file and example_file raises an error.
+
+    Issue 212: code_file and example_file are mutually exclusive.
+    """
+    prompt_file = tmp_path / "test.prompt"
+    code_file = tmp_path / "test.py"
+    example_file = tmp_path / "test_example.py"
+
+    result = cmd_test_main(
+        ctx=mock_ctx_fixture,
+        prompt_file=str(prompt_file),
+        code_file=str(code_file),
+        example_file=str(example_file),  # Both provided - should error
+        output="test_output.py",
+        language=None,
+        coverage_report=None,
+        existing_tests=None,
+        target_coverage=None,
+        merge=False,
+    )
+
+    # Should return error tuple
+    assert result[0] == ""
+    assert result[1] == 0.0
+    assert "Error:" in result[2]
+    assert "mutually exclusive" in result[2]
+
+
+def test_cmd_test_main_mutual_exclusivity_neither_provided(mock_ctx_fixture):
+    """
+    Test that providing neither code_file nor example_file raises an error.
+
+    Issue 212: Exactly one of code_file or example_file must be provided.
+    """
+    result = cmd_test_main(
+        ctx=mock_ctx_fixture,
+        prompt_file="test.prompt",
+        code_file=None,  # Neither provided
+        example_file=None,
+        output="test_output.py",
+        language=None,
+        coverage_report=None,
+        existing_tests=None,
+        target_coverage=None,
+        merge=False,
+    )
+
+    # Should return error tuple
+    assert result[0] == ""
+    assert result[1] == 0.0
+    assert "Error:" in result[2]
+
+
+def test_cmd_test_main_module_name_strips_example_suffix(mock_ctx_fixture, tmp_path):
+    """
+    Test that module_name strips '_example' suffix in TDD mode.
+
+    Issue 212: calculator_example.py -> module_name='calculator' for proper imports.
+    """
+    prompt_file = tmp_path / "calculator.prompt"
+    prompt_file.write_text("Create calculator")
+
+    example_file = tmp_path / "calculator_example.py"
+    example_file.write_text("from calculator import add")
+
+    output_file = tmp_path / "test_calculator.py"
+
+    with patch("pdd.cmd_test_main.construct_paths") as mock_construct_paths, \
+         patch("pdd.cmd_test_main.generate_test") as mock_generate_test, \
+         patch("builtins.open", mock_open()):
+
+        mock_construct_paths.return_value = (
+            {},
+            {
+                "prompt_file": "prompt",
+                "example_file": str(example_file),
+            },
+            {"output": str(output_file)},
+            "python"
+        )
+        mock_generate_test.return_value = ("test_code", 0.05, "test_model")
+
+        cmd_test_main(
+            ctx=mock_ctx_fixture,
+            prompt_file=str(prompt_file),
+            code_file=None,
+            example_file=str(example_file),
+            output=str(output_file),
+            language=None,
+            coverage_report=None,
+            existing_tests=None,
+            target_coverage=None,
+            merge=False,
+        )
+
+        # Verify module_name was stripped of '_example' suffix
+        call_kwargs = mock_generate_test.call_args.kwargs
+        assert call_kwargs["module_name"] == "calculator", \
+            f"Expected module_name='calculator', got '{call_kwargs['module_name']}'"
+
+
+def test_cmd_test_main_module_name_preserves_regular_filename(mock_ctx_fixture, tmp_path):
+    """
+    Test that module_name is NOT stripped for regular files (without _example suffix).
+
+    Issue 212: Regular files keep their full stem as module_name.
+    """
+    prompt_file = tmp_path / "calculator.prompt"
+    code_file = tmp_path / "calculator.py"  # No _example suffix
+    output_file = tmp_path / "test_calculator.py"
+
+    with patch("pdd.cmd_test_main.construct_paths") as mock_construct_paths, \
+         patch("pdd.cmd_test_main.generate_test") as mock_generate_test, \
+         patch("builtins.open", mock_open()):
+
+        mock_construct_paths.return_value = (
+            {},
+            {
+                "prompt_file": "prompt",
+                "code_file": str(code_file),
+            },
+            {"output": str(output_file)},
+            "python"
+        )
+        mock_generate_test.return_value = ("test_code", 0.05, "test_model")
+
+        cmd_test_main(
+            ctx=mock_ctx_fixture,
+            prompt_file=str(prompt_file),
+            code_file=str(code_file),
+            example_file=None,
+            output=str(output_file),
+            language=None,
+            coverage_report=None,
+            existing_tests=None,
+            target_coverage=None,
+            merge=False,
+        )
+
+        # Verify module_name is unchanged (no stripping)
+        call_kwargs = mock_generate_test.call_args.kwargs
+        assert call_kwargs["module_name"] == "calculator", \
+            "Regular files should keep their full stem as module_name"
+
+
+def test_cmd_test_main_tdd_mode_passes_example_content_to_generate_test(mock_ctx_fixture, tmp_path):
+    """
+    Test that TDD mode passes example content (not code content) to generate_test.
+
+    Issue 212: Verify the 'example' parameter receives content, not 'code' parameter.
+    """
+    prompt_file = tmp_path / "test.prompt"
+    prompt_file.write_text("Test prompt")
+
+    example_file = tmp_path / "example_example.py"
+    example_content = "from example import func\nfunc()"
+    example_file.write_text(example_content)
+
+    output_file = tmp_path / "test_output.py"
+
+    with patch("pdd.cmd_test_main.construct_paths") as mock_construct_paths, \
+         patch("pdd.cmd_test_main.generate_test") as mock_generate_test, \
+         patch("builtins.open", mock_open(read_data=example_content)):
+
+        mock_construct_paths.return_value = (
+            {},
+            {
+                "prompt_file": "prompt",
+                "example_file": str(example_file),
+            },
+            {"output": str(output_file)},
+            "python"
+        )
+        mock_generate_test.return_value = ("test_code", 0.05, "test_model")
+
+        cmd_test_main(
+            ctx=mock_ctx_fixture,
+            prompt_file=str(prompt_file),
+            code_file=None,
+            example_file=str(example_file),
+            output=str(output_file),
+            language=None,
+            coverage_report=None,
+            existing_tests=None,
+            target_coverage=None,
+            merge=False,
+        )
+
+        # Verify example parameter received content, code parameter is None
+        call_kwargs = mock_generate_test.call_args.kwargs
+        assert call_kwargs.get("code") is None, "TDD mode should not pass code"
+        assert "example" in call_kwargs, "TDD mode should pass example"
+        assert call_kwargs["example"] is not None, "Example content should not be None"
+
+
 # D. Cloud-Only Mode and Local Mode Tests
 
 def test_cmd_test_main_cloud_only_mode_prevents_fallback(

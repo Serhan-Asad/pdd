@@ -1,0 +1,26 @@
+# Calculator Module
+
+Create a simple calculator module with the following functions:
+
+## Functions
+
+### add(a, b)
+- Takes two numbers as parameters
+- Returns their sum
+- Should handle integers and floats
+
+### subtract(a, b)
+- Takes two numbers as parameters
+- Returns the difference (a - b)
+- Should handle integers and floats
+
+### divide(a, b)
+- Takes two numbers as parameters
+- Returns the quotient (a / b)
+- Should raise ValueError if b is zero with message "Cannot divide by zero"
+- Should handle integers and floats
+
+## Requirements
+- All functions should be pure (no side effects)
+- Handle both integer and floating-point inputs
+- Provide clear error messages
