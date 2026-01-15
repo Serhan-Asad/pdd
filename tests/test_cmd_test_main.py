@@ -1326,6 +1326,11 @@ def test_cmd_test_main_example_file_detection(mock_ctx_fixture, mock_files_fixtu
             merge=False,
         )
 
+        # Verify the example file detection logic works correctly
+        from pathlib import Path
+        assert Path(mock_files_fixture["code_file"]).stem.endswith("_example"), \
+            "Test file should end with _example"
+
         # Verify generate_test was called with example parameter (not code)
         mock_generate_test.assert_called_once()
         call_kwargs = mock_generate_test.call_args[1]

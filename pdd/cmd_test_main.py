@@ -147,10 +147,10 @@ def cmd_test_main(
 
     # Prepare metadata for generation
     source_file_path = str(Path(code_file).expanduser().resolve())
-    # output_file_paths['output_file'] is set by construct_paths based on
+    # output_file_paths['output'] is set by construct_paths based on
     # --output or defaults
     test_file_path = str(
-        Path(output_file_paths.get("output_file", "test_output.py"))
+        Path(output_file_paths.get("output", "test_output.py"))
         .expanduser().resolve()
     )
     module_name = Path(source_file_path).stem
@@ -235,21 +235,21 @@ def cmd_test_main(
                     raise click.UsageError(f"Cloud returned invalid JSON: {json_err}")
                 console.print("[yellow]Cloud returned invalid JSON, falling back to local.[/yellow]")
                 is_local = True
-                raise  # Re-raise to exit try block
-
-            generated_content = data.get("generatedTest", "")
-            total_cost = float(data.get("totalCost", 0.0))
-            model_name = data.get("modelName", "cloud-model")
-
-            # Check for empty response
-            if not generated_content or not generated_content.strip():
-                if cloud_only:
-                    raise click.UsageError("Cloud returned empty test content")
-                console.print("[yellow]Cloud returned empty test content, falling back to local.[/yellow]")
-                is_local = True
             else:
-                # Success!
-                console.print("[green]Cloud Success[/green]")
+                # Successfully parsed JSON, extract data
+                generated_content = data.get("generatedTest", "")
+                total_cost = float(data.get("totalCost", 0.0))
+                model_name = data.get("modelName", "cloud-model")
+
+                # Check for empty response
+                if not generated_content or not generated_content.strip():
+                    if cloud_only:
+                        raise click.UsageError("Cloud returned empty test content")
+                    console.print("[yellow]Cloud returned empty test content, falling back to local.[/yellow]")
+                    is_local = True
+                else:
+                    # Success!
+                    console.print("[green]Cloud Success[/green]")
 
         except click.UsageError:
             # Re-raise UsageError without wrapping
@@ -289,9 +289,6 @@ def cmd_test_main(
                 raise click.UsageError(f"Cloud execution failed (HTTP {status_code}): {error_text}")
             console.print(f"[yellow]Cloud execution failed (HTTP {status_code}), falling back to local.[/yellow]")
             is_local = True
-        except json.JSONDecodeError:
-            # Already handled above, just ensure we fall through to local
-            pass
         except Exception as e:
             if cloud_only:
                 raise click.UsageError(f"Cloud execution failed: {e}")

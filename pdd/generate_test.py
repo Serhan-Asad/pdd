@@ -36,8 +36,8 @@ def _validate_inputs(
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("Prompt must be a non-empty string")
 
-    if code is None or not isinstance(code, str) or not code.strip():
-        raise ValueError("Code must be a non-empty string")
+    if code is not None and (not isinstance(code, str) or not code.strip()):
+        raise ValueError("Code must be a non-empty string when provided")
 
     if not isinstance(strength, (int, float)) or not 0 <= strength <= 1:
         raise ValueError("Strength must be a float between 0 and 1")

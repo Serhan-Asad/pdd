@@ -68,8 +68,11 @@ def test_validate_inputs_empty_prompt():
 
 
 def test_validate_inputs_none_code():
-    with pytest.raises(ValueError, match="Code must be a non-empty string"):
-        _validate_inputs("prompt", None, DEFAULT_STRENGTH, 0.5, "python")
+    # None code should be allowed (for when example is provided instead)
+    _validate_inputs("prompt", None, DEFAULT_STRENGTH, 0.5, "python")
+    # But empty string code should raise an error
+    with pytest.raises(ValueError, match="Code must be a non-empty string when provided"):
+        _validate_inputs("prompt", "", DEFAULT_STRENGTH, 0.5, "python")
 
 
 def test_validate_inputs_invalid_strength():
