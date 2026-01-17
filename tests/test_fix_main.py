@@ -200,7 +200,9 @@ def test_fix_main_with_loop(
         "Iteratively fixed code",
         2,                      # attempts
         1.25,                   # total_cost
-        "gpt-4-loop"
+        "gpt-4-loop",
+        True,                   # test_modified
+        True                    # code_modified
     )
 
     # Use mock_open for file writing assertions
@@ -299,7 +301,9 @@ def test_fix_main_passes_agentic_fallback_to_fix_error_loop(
         "Fixed code",
         1,
         0.5,
-        "gpt-4"
+        "gpt-4",
+        True,  # test_modified
+        True   # code_modified
     )
 
     m_open = mock_open()
@@ -714,7 +718,7 @@ def test_fix_main_passes_time_to_fix_error_loop(
         None
     )
 
-    mock_fix_error_loop.return_value = (True, "test", "code", 1, 0.5, "gpt-4")
+    mock_fix_error_loop.return_value = (True, "test", "code", 1, 0.5, "gpt-4", True, True)
 
     m_open = mock_open()
     with patch('builtins.open', m_open):
@@ -850,7 +854,7 @@ def test_fix_main_loop_mode_excludes_error_file_from_input_paths(
         None
     )
 
-    mock_fix_error_loop.return_value = (True, "test", "code", 1, 0.5, "gpt-4")
+    mock_fix_error_loop.return_value = (True, "test", "code", 1, 0.5, "gpt-4", True, True)
 
     m_open = mock_open()
     with patch('builtins.open', m_open):
@@ -944,7 +948,7 @@ def test_fix_main_loop_returns_multiple_attempts(
     )
 
     # Simulate 5 attempts before success
-    mock_fix_error_loop.return_value = (True, "test", "code", 5, 2.50, "gpt-4")
+    mock_fix_error_loop.return_value = (True, "test", "code", 5, 2.50, "gpt-4", True, True)
 
     m_open = mock_open()
     with patch('builtins.open', m_open):
@@ -1505,7 +1509,7 @@ def test_fix_main_loop_mode_with_local_flag_uses_local(
         'python'
     )
 
-    mock_fix_error_loop.return_value = (True, "fixed test", "fixed code", 2, 1.0, "local-model")
+    mock_fix_error_loop.return_value = (True, "fixed test", "fixed code", 2, 1.0, "local-model", True, True)
 
     m_open = mock_open()
     with patch('builtins.open', m_open):
@@ -1551,7 +1555,7 @@ def test_fix_main_loop_mode_uses_hybrid_cloud_by_default(
         'python'
     )
 
-    mock_fix_error_loop.return_value = (True, "fixed test", "fixed code", 2, 1.0, "cloud-model")
+    mock_fix_error_loop.return_value = (True, "fixed test", "fixed code", 2, 1.0, "cloud-model", True, True)
 
     m_open = mock_open()
     with patch('builtins.open', m_open):
@@ -1921,7 +1925,7 @@ def test_fix_error_loop_uses_cloud_when_use_cloud_true(mock_pytest, mock_cloud_f
             "cloud-model"
         )
 
-        success, final_ut, final_code, attempts, cost, model = fix_error_loop(
+        success, final_ut, final_code, attempts, cost, model, test_modified, code_modified = fix_error_loop(
             unit_test_file=unit_test_file,
             code_file=code_file,
             prompt_file="prompt.prompt",
@@ -1982,7 +1986,7 @@ def test_fix_error_loop_uses_local_when_use_cloud_false(mock_pytest, mock_local_
             "local-model"
         )
 
-        success, final_ut, final_code, attempts, cost, model = fix_error_loop(
+        success, final_ut, final_code, attempts, cost, model, test_modified, code_modified = fix_error_loop(
             unit_test_file=unit_test_file,
             code_file=code_file,
             prompt_file="prompt.prompt",
@@ -2047,7 +2051,7 @@ def test_fix_error_loop_cloud_fallback_to_local(mock_pytest, mock_cloud_fix, moc
             "local-fallback-model"
         )
 
-        success, final_ut, final_code, attempts, cost, model = fix_error_loop(
+        success, final_ut, final_code, attempts, cost, model, test_modified, code_modified = fix_error_loop(
             unit_test_file=unit_test_file,
             code_file=code_file,
             prompt_file="prompt.prompt",
@@ -2185,21 +2189,27 @@ FAILED test_sum_list.py::test_sum_list - AssertionError: assert 6 == 10
             'confirm_callback': None
         }
 
-        success, fixed_test, fixed_code, attempts, cost, model = fix_main(
-            ctx=ctx,
-            prompt_file=str(prompt_file),
-            code_file=str(code_file),
-            unit_test_file=str(unit_test_file),
-            error_file=str(error_file),
-            output_test=str(output_test),
-            output_code=str(output_code),
-            output_results=None,
-            loop=False,
-            verification_program=None,
-            max_attempts=3,
-            budget=5.0,
-            auto_submit=False
-        )
+        try:
+            success, fixed_test, fixed_code, attempts, cost, model = fix_main(
+                ctx=ctx,
+                prompt_file=str(prompt_file),
+                code_file=str(code_file),
+                unit_test_file=str(unit_test_file),
+                error_file=str(error_file),
+                output_test=str(output_test),
+                output_code=str(output_code),
+                output_results=None,
+                loop=False,
+                verification_program=None,
+                max_attempts=3,
+                budget=5.0,
+                auto_submit=False
+            )
+        except click.UsageError as e:
+            # Cloud endpoint might be unavailable even if credentials exist
+            if "Cloud" in str(e) and ("network" in str(e).lower() or "HTTP error" in str(e)):
+                pytest.skip(f"Cloud endpoint unavailable: {e}")
+            raise
 
         # Capture output to check for cloud success
         captured = capsys.readouterr()
@@ -2348,3 +2358,475 @@ def test_fix_errors_prompt_preserves_all_existing_tests():
         "Prompt must explicitly forbid removing test functions"
     assert "every single test function from the input" in prompt_content, \
         "Prompt must require output to include every input test function"
+
+
+# ============================================================================
+# Bug Fix Tests - Issue #232: Conditional Output Printing
+# ============================================================================
+
+@patch('pdd.fix_main.construct_paths')
+@patch('pdd.fix_main.fix_error_loop')
+@patch('pdd.fix_main.rprint')
+def test_fix_main_loop_mode_prints_only_modified_test_file(
+    mock_rprint,
+    mock_fix_error_loop,
+    mock_construct_paths,
+    mock_ctx
+):
+    """
+    TEST (Issue #232): In loop mode, when only test file is modified,
+    fix_main should only print the test file path, not the code file path.
+    """
+    mock_construct_paths.return_value = (
+        {},
+        {'prompt_file': 'p', 'code_file': 'c', 'unit_test_file': 't'},
+        {
+            'output_test': 'output/test_fixed.py',
+            'output_code': 'output/code_fixed.py',
+            'output_results': 'results/fix_results.log'
+        },
+        None
+    )
+
+    # Mock fix_error_loop to return modification flags: only test modified
+    mock_fix_error_loop.return_value = (
+        True,                   # success
+        "fixed test content",
+        "original code content",
+        2,                      # attempts
+        1.25,                   # total_cost
+        "gpt-4",
+        True,                   # test_file_was_modified
+        False                   # code_file_was_modified - NOT modified
+    )
+
+    m_open = mock_open()
+    with patch('builtins.open', m_open):
+        fix_main(
+            ctx=mock_ctx,
+            prompt_file="p.prompt",
+            code_file="c.py",
+            unit_test_file="t.py",
+            error_file="e.log",
+            output_test=None,
+            output_code=None,
+            output_results=None,
+            loop=True,
+            verification_program="verify.py",
+            max_attempts=3,
+            budget=5.0,
+            auto_submit=False
+        )
+
+    # Verify output - should print test file but NOT code file
+    rprint_calls = [str(call) for call in mock_rprint.call_args_list]
+    rprint_output = " ".join(rprint_calls)
+
+    assert "output/test_fixed.py" in rprint_output, \
+        "Test file path should be printed when test was modified"
+    assert "output/code_fixed.py" not in rprint_output, \
+        "Code file path should NOT be printed when code was NOT modified"
+
+
+@patch('pdd.fix_main.construct_paths')
+@patch('pdd.fix_main.fix_error_loop')
+@patch('pdd.fix_main.rprint')
+def test_fix_main_loop_mode_prints_only_modified_code_file(
+    mock_rprint,
+    mock_fix_error_loop,
+    mock_construct_paths,
+    mock_ctx
+):
+    """
+    TEST (Issue #232): In loop mode, when only code file is modified,
+    fix_main should only print the code file path, not the test file path.
+    """
+    mock_construct_paths.return_value = (
+        {},
+        {'prompt_file': 'p', 'code_file': 'c', 'unit_test_file': 't'},
+        {
+            'output_test': 'output/test_fixed.py',
+            'output_code': 'output/code_fixed.py',
+            'output_results': 'results/fix_results.log'
+        },
+        None
+    )
+
+    # Mock fix_error_loop to return modification flags: only code modified
+    mock_fix_error_loop.return_value = (
+        True,
+        "original test content",
+        "fixed code content",
+        2,
+        1.25,
+        "gpt-4",
+        False,  # test_file_was_modified - NOT modified
+        True    # code_file_was_modified
+    )
+
+    m_open = mock_open()
+    with patch('builtins.open', m_open):
+        fix_main(
+            ctx=mock_ctx,
+            prompt_file="p.prompt",
+            code_file="c.py",
+            unit_test_file="t.py",
+            error_file="e.log",
+            output_test=None,
+            output_code=None,
+            output_results=None,
+            loop=True,
+            verification_program="verify.py",
+            max_attempts=3,
+            budget=5.0,
+            auto_submit=False
+        )
+
+    # Verify output - should print code file but NOT test file
+    rprint_calls = [str(call) for call in mock_rprint.call_args_list]
+    rprint_output = " ".join(rprint_calls)
+
+    assert "output/code_fixed.py" in rprint_output, \
+        "Code file path should be printed when code was modified"
+    assert "output/test_fixed.py" not in rprint_output, \
+        "Test file path should NOT be printed when test was NOT modified"
+
+
+@patch('pdd.fix_main.construct_paths')
+@patch('pdd.fix_main.fix_error_loop')
+@patch('pdd.fix_main.rprint')
+def test_fix_main_loop_mode_prints_both_when_both_modified(
+    mock_rprint,
+    mock_fix_error_loop,
+    mock_construct_paths,
+    mock_ctx
+):
+    """
+    TEST (Issue #232): In loop mode, when both files are modified,
+    fix_main should print both file paths.
+    """
+    mock_construct_paths.return_value = (
+        {},
+        {'prompt_file': 'p', 'code_file': 'c', 'unit_test_file': 't'},
+        {
+            'output_test': 'output/test_fixed.py',
+            'output_code': 'output/code_fixed.py',
+            'output_results': 'results/fix_results.log'
+        },
+        None
+    )
+
+    # Mock fix_error_loop to return modification flags: both modified
+    mock_fix_error_loop.return_value = (
+        True,
+        "fixed test content",
+        "fixed code content",
+        2,
+        1.25,
+        "gpt-4",
+        True,   # test_file_was_modified
+        True    # code_file_was_modified
+    )
+
+    m_open = mock_open()
+    with patch('builtins.open', m_open):
+        fix_main(
+            ctx=mock_ctx,
+            prompt_file="p.prompt",
+            code_file="c.py",
+            unit_test_file="t.py",
+            error_file="e.log",
+            output_test=None,
+            output_code=None,
+            output_results=None,
+            loop=True,
+            verification_program="verify.py",
+            max_attempts=3,
+            budget=5.0,
+            auto_submit=False
+        )
+
+    # Verify output - should print both file paths
+    rprint_calls = [str(call) for call in mock_rprint.call_args_list]
+    rprint_output = " ".join(rprint_calls)
+
+    assert "output/test_fixed.py" in rprint_output, \
+        "Test file path should be printed when test was modified"
+    assert "output/code_fixed.py" in rprint_output, \
+        "Code file path should be printed when code was modified"
+
+
+@patch('pdd.fix_main.construct_paths')
+@patch('pdd.fix_main.fix_error_loop')
+@patch('pdd.fix_main.rprint')
+def test_fix_main_loop_mode_prints_neither_when_neither_modified(
+    mock_rprint,
+    mock_fix_error_loop,
+    mock_construct_paths,
+    mock_ctx
+):
+    """
+    TEST (Issue #232): In loop mode, when neither file is modified
+    (tests pass immediately), fix_main should not print file paths.
+    """
+    mock_construct_paths.return_value = (
+        {},
+        {'prompt_file': 'p', 'code_file': 'c', 'unit_test_file': 't'},
+        {
+            'output_test': 'output/test_fixed.py',
+            'output_code': 'output/code_fixed.py',
+            'output_results': 'results/fix_results.log'
+        },
+        None
+    )
+
+    # Mock fix_error_loop to return modification flags: neither modified
+    mock_fix_error_loop.return_value = (
+        True,
+        "original test content",
+        "original code content",
+        0,      # attempts - 0 because tests passed immediately
+        0.0,
+        "",
+        False,  # test_file_was_modified
+        False   # code_file_was_modified
+    )
+
+    m_open = mock_open()
+    with patch('builtins.open', m_open):
+        fix_main(
+            ctx=mock_ctx,
+            prompt_file="p.prompt",
+            code_file="c.py",
+            unit_test_file="t.py",
+            error_file="e.log",
+            output_test=None,
+            output_code=None,
+            output_results=None,
+            loop=True,
+            verification_program="verify.py",
+            max_attempts=3,
+            budget=5.0,
+            auto_submit=False
+        )
+
+    # Verify output - should NOT print file paths (neither was modified)
+    rprint_calls = [str(call) for call in mock_rprint.call_args_list]
+    rprint_output = " ".join(rprint_calls)
+
+    assert "output/test_fixed.py" not in rprint_output, \
+        "Test file path should NOT be printed when test was NOT modified"
+    assert "output/code_fixed.py" not in rprint_output, \
+        "Code file path should NOT be printed when code was NOT modified"
+
+
+@patch('pdd.fix_main.Path')
+@patch('pdd.fix_main.construct_paths')
+@patch('pdd.fix_main.fix_errors_from_unit_tests')
+@patch('pdd.fix_main.rprint')
+def test_fix_main_non_loop_mode_uses_update_flags_not_modification_flags(
+    mock_rprint,
+    mock_fix_errors,
+    mock_construct_paths,
+    mock_path,
+    mock_ctx
+):
+    """
+    TEST (Issue #232): In non-loop mode, fix_main should use the update flags
+    from fix_errors_from_unit_tests (update_unit_test, update_code),
+    NOT modification flags (which don't exist in non-loop mode).
+
+    This ensures non-loop mode behavior is unchanged by issue #232 fix.
+    """
+    mock_ctx.obj['local'] = True
+    mock_path.return_value.exists.return_value = True
+
+    mock_construct_paths.return_value = (
+        {},
+        {'prompt_file': 'p', 'code_file': 'c', 'unit_test_file': 't', 'error_file': 'e'},
+        {
+            'output_test': 'output/test_fixed.py',
+            'output_code': 'output/code_fixed.py',
+            'output_results': 'results/fix_results.log'
+        },
+        None
+    )
+
+    # Mock fix_errors_from_unit_tests: only update_unit_test=True
+    mock_fix_errors.return_value = (
+        True,   # update_unit_test
+        False,  # update_code
+        "fixed test content",
+        "",     # fixed_code is empty
+        "Analysis",
+        0.5,
+        "gpt-4"
+    )
+
+    m_open = mock_open()
+    with patch('builtins.open', m_open):
+        fix_main(
+            ctx=mock_ctx,
+            prompt_file="p.prompt",
+            code_file="c.py",
+            unit_test_file="t.py",
+            error_file="e.log",
+            output_test=None,
+            output_code=None,
+            output_results=None,
+            loop=False,  # Non-loop mode
+            verification_program=None,
+            max_attempts=3,
+            budget=5.0,
+            auto_submit=False
+        )
+
+    # Verify output - should print test file but NOT code file (based on update flags)
+    rprint_calls = [str(call) for call in mock_rprint.call_args_list]
+    rprint_output = " ".join(rprint_calls)
+
+    # In non-loop mode, should use update_unit_test and update_code flags
+    # update_unit_test=True and fixed_unit_test non-empty -> print test path
+    assert "output/test_fixed.py" in rprint_output, \
+        "Test file path should be printed when update_unit_test=True and content exists"
+    # update_code=False or fixed_code empty -> don't print code path
+    assert "output/code_fixed.py" not in rprint_output, \
+        "Code file path should NOT be printed when update_code=False or content empty"
+
+
+@patch('pdd.fix_main.Path')
+@patch('pdd.fix_main.construct_paths')
+@patch('pdd.fix_main.fix_errors_from_unit_tests')
+@patch('pdd.fix_main.rprint')
+@patch('pdd.fix_main.run_pytest_on_file')
+def test_fix_main_non_loop_mode_checks_content_exists_before_printing(
+    mock_run_pytest,
+    mock_rprint,
+    mock_fix_errors,
+    mock_construct_paths,
+    mock_path,
+    mock_ctx
+):
+    """
+    TEST (Issue #232): In non-loop mode, fix_main should check that
+    both update_flag=True AND content is non-empty before printing paths.
+
+    This prevents printing paths for files with empty content.
+    """
+    mock_ctx.obj['local'] = True
+    mock_path.return_value.exists.return_value = True
+
+    mock_construct_paths.return_value = (
+        {},
+        {'prompt_file': 'p', 'code_file': 'c', 'unit_test_file': 't', 'error_file': 'e'},
+        {
+            'output_test': 'output/test_fixed.py',
+            'output_code': 'output/code_fixed.py',
+            'output_results': 'results/fix_results.log'
+        },
+        None
+    )
+
+    # Mock fix_errors_from_unit_tests: update_code=True BUT fixed_code is empty
+    mock_fix_errors.return_value = (
+        False,  # update_unit_test
+        True,   # update_code - LLM says update, but...
+        "",     # fixed_unit_test is empty
+        "",     # fixed_code is ALSO empty (no actual content)
+        "Analysis",
+        0.5,
+        "gpt-4"
+    )
+
+    # Mock pytest to pass (so we don't fail the whole operation)
+    mock_run_pytest.return_value = (0, 0, 0, "All tests passed")
+
+    m_open = mock_open()
+    with patch('builtins.open', m_open):
+        fix_main(
+            ctx=mock_ctx,
+            prompt_file="p.prompt",
+            code_file="c.py",
+            unit_test_file="t.py",
+            error_file="e.log",
+            output_test=None,
+            output_code=None,
+            output_results=None,
+            loop=False,
+            verification_program=None,
+            max_attempts=3,
+            budget=5.0,
+            auto_submit=False
+        )
+
+    # Verify output - should NOT print file paths when content is empty
+    rprint_calls = [str(call) for call in mock_rprint.call_args_list]
+    rprint_output = " ".join(rprint_calls)
+
+    # Both contents are empty, so neither path should be printed
+    assert "output/test_fixed.py" not in rprint_output, \
+        "Test file path should NOT be printed when content is empty"
+    assert "output/code_fixed.py" not in rprint_output, \
+        "Code file path should NOT be printed when content is empty (even if update_code=True)"
+
+
+@patch('pdd.fix_main.construct_paths')
+@patch('pdd.fix_main.fix_error_loop')
+@patch('pdd.fix_main.rprint')
+def test_fix_main_loop_mode_always_prints_results_file(
+    mock_rprint,
+    mock_fix_error_loop,
+    mock_construct_paths,
+    mock_ctx
+):
+    """
+    TEST (Issue #232): Results file path should ALWAYS be printed regardless
+    of modification flags. This is the expected behavior - results are always generated.
+    """
+    mock_construct_paths.return_value = (
+        {},
+        {'prompt_file': 'p', 'code_file': 'c', 'unit_test_file': 't'},
+        {
+            'output_test': 'output/test_fixed.py',
+            'output_code': 'output/code_fixed.py',
+            'output_results': 'results/fix_results.log'  # Results file
+        },
+        None
+    )
+
+    # Mock fix_error_loop: neither file modified
+    mock_fix_error_loop.return_value = (
+        True,
+        "original test",
+        "original code",
+        0,
+        0.0,
+        "",
+        False,  # test_file_was_modified
+        False   # code_file_was_modified
+    )
+
+    m_open = mock_open()
+    with patch('builtins.open', m_open):
+        fix_main(
+            ctx=mock_ctx,
+            prompt_file="p.prompt",
+            code_file="c.py",
+            unit_test_file="t.py",
+            error_file="e.log",
+            output_test=None,
+            output_code=None,
+            output_results=None,
+            loop=True,
+            verification_program="verify.py",
+            max_attempts=3,
+            budget=5.0,
+            auto_submit=False
+        )
+
+    # Verify output - results file should ALWAYS be printed
+    rprint_calls = [str(call) for call in mock_rprint.call_args_list]
+    rprint_output = " ".join(rprint_calls)
+
+    assert "results/fix_results.log" in rprint_output, \
+        "Results file path should ALWAYS be printed, regardless of modification flags"
