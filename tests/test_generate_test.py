@@ -218,3 +218,23 @@ def test_generate_test_uses_example_template(mock_postprocess, mock_llm_invoke, 
     generate_test(prompt="test prompt", code=None, example="example content", verbose=False)
 
     mock_load_template.assert_called_once_with("generate_test_from_example_LLM")
+
+
+# Test for Issue #342: sys.path isolation guidance
+def test_context_test_prompt_includes_syspath_isolation():
+    """Test that context/test.prompt includes sys.path isolation guidance (issue #342)."""
+    try:
+        test_prompt_content = read_prompt_file("context/test.prompt")
+    except FileNotFoundError:
+        pytest.skip("context/test.prompt not found (may not be copied yet)")
+
+    # Verify key elements of the sys.path isolation section are present
+    assert "SYS.PATH ISOLATION" in test_prompt_content or "sys.path" in test_prompt_content.lower(), \
+        "test.prompt should include sys.path isolation guidance"
+    assert "PRIORITIZE LOCAL CODE OVER SITE-PACKAGES" in test_prompt_content or \
+           "local code" in test_prompt_content.lower(), \
+        "test.prompt should mention prioritizing local code"
+    assert "_repo_root = Path(__file__).resolve().parent" in test_prompt_content, \
+        "test.prompt should include the recommended sys.path pattern with Path(__file__).resolve()"
+    assert "sys.path.insert(0" in test_prompt_content, \
+        "test.prompt should include sys.path.insert(0, ...) pattern"
