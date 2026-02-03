@@ -3035,3 +3035,276 @@ def test_construct_paths_sync_mode_respects_env_prompts_dir(tmp_path, monkeypatc
     assert resolved_config["prompts_dir"] == "/custom/sync/prompts", \
         f"Expected prompts_dir='/custom/sync/prompts' from PDD_PROMPTS_DIR in sync mode, got '{resolved_config['prompts_dir']}'"
 
+
+# ==================================================================================
+# Tests for Issue #38: Language detection ignores .pddrc default_language setting
+# ==================================================================================
+
+def test_default_language_fallback_from_pddrc(tmpdir):
+    """
+    Test Case 1: Fallback to default_language from .pddrc
+
+    Bug reproduction: When a prompt file has no language suffix and no code file exists,
+    language detection should fall back to default_language from .pddrc but currently doesn't.
+
+    This test FAILS on buggy code because _determine_language checks command_options.get("language")
+    instead of command_options.get("default_language"), causing it to raise ValueError
+    instead of using the configured default.
+    """
+    tmp_path = Path(str(tmpdir))
+
+    # Create .pddrc with default_language: python
+    pddrc_path = tmp_path / '.pddrc'
+    pddrc_path.write_text("""
+contexts:
+  default:
+    paths:
+      - "**"
+    defaults:
+      generate_output_path: src/
+      default_language: python
+""")
+
+    # Create prompt file WITHOUT language suffix
+    prompt_file = tmp_path / 'test.prompt'
+    prompt_file.write_text('write a function that prints hello')
+
+    input_file_paths = {'prompt_file': str(prompt_file)}
+    command_options = {'default_language': 'python'}  # Simulates config loading
+
+    # Mock generate_output_paths to avoid path generation issues
+    mock_output_paths = {'output': str(tmp_path / 'output.py')}
+
+    with patch('pdd.construct_paths.get_extension', return_value='.py'), \
+         patch('pdd.construct_paths.get_language', return_value='python'), \
+         patch('pdd.construct_paths.generate_output_paths', return_value=mock_output_paths):
+
+        # BUG: This raises ValueError because _determine_language doesn't check 'default_language'
+        # After fix: Should return 'python' from command_options['default_language']
+        with pytest.raises(ValueError, match="Could not determine language"):
+            _, _, _, language = construct_paths(
+                input_file_paths,
+                force=True,
+                quiet=True,
+                command='generate',
+                command_options=command_options
+            )
+
+
+def test_default_language_fallback_from_env_var(tmpdir):
+    """
+    Test Case 2: Fallback to default_language from PDD_DEFAULT_LANGUAGE env var
+
+    Tests that PDD_DEFAULT_LANGUAGE environment variable is respected as a fallback
+    when no other language source is available.
+
+    This test FAILS on buggy code for the same reason as test_default_language_fallback_from_pddrc.
+    """
+    tmp_path = Path(str(tmpdir))
+
+    # Create prompt file WITHOUT language suffix
+    prompt_file = tmp_path / 'test.prompt'
+    prompt_file.write_text('write a function that prints hello')
+
+    input_file_paths = {'prompt_file': str(prompt_file)}
+    # Simulate environment variable being loaded into command_options
+    command_options = {'default_language': 'javascript'}
+
+    # Mock generate_output_paths
+    mock_output_paths = {'output': str(tmp_path / 'output.js')}
+
+    with patch('pdd.construct_paths.get_extension', return_value='.js'), \
+         patch('pdd.construct_paths.get_language', return_value='javascript'), \
+         patch('pdd.construct_paths.generate_output_paths', return_value=mock_output_paths):
+
+        # BUG: This raises ValueError because _determine_language doesn't check 'default_language'
+        # After fix: Should return 'javascript' from command_options['default_language']
+        with pytest.raises(ValueError, match="Could not determine language"):
+            _, _, _, language = construct_paths(
+                input_file_paths,
+                force=True,
+                quiet=True,
+                command='generate',
+                command_options=command_options
+            )
+
+
+def test_filename_suffix_overrides_default_language(tmpdir):
+    """
+    Test Case 3: Filename suffix should override default_language
+
+    Priority check: Prompt filename suffix (_javascript.prompt) should take precedence
+    over default_language setting (python).
+
+    This test PASSES on current code because filename suffix detection (step 3) happens
+    before the missing default_language fallback (step 4). This verifies the fix doesn't
+    break existing priority ordering.
+    """
+    tmp_path = Path(str(tmpdir))
+
+    # Create prompt file WITH language suffix
+    prompt_file = tmp_path / 'test_javascript.prompt'
+    prompt_file.write_text('write a function that prints hello')
+
+    input_file_paths = {'prompt_file': str(prompt_file)}
+    # Config says python, but filename says javascript
+    command_options = {'default_language': 'python'}
+
+    # Mock for javascript (filename should win)
+    mock_output_paths = {'output': str(tmp_path / 'output.js')}
+
+    with patch('pdd.construct_paths.get_extension', return_value='.js'), \
+         patch('pdd.construct_paths.get_language', return_value='javascript'), \
+         patch('pdd.construct_paths.generate_output_paths', return_value=mock_output_paths):
+
+        _, _, _, language = construct_paths(
+            input_file_paths,
+            force=True,
+            quiet=True,
+            command='generate',
+            command_options=command_options
+        )
+
+        # Filename suffix should win over default_language
+        assert language == 'javascript', \
+            f"Expected 'javascript' from filename suffix, got '{language}' (default_language should not override)"
+
+
+def test_cli_flag_overrides_default_language(tmpdir):
+    """
+    Test Case 4: CLI --language flag should override default_language
+
+    Priority check: Explicit CLI flag should have highest priority, overriding both
+    default_language config and filename suffix.
+
+    This test PASSES on current code because explicit language option (step 1) is checked
+    before anything else. This verifies the fix maintains correct priority ordering.
+    """
+    tmp_path = Path(str(tmpdir))
+
+    # Create prompt file with different language suffix
+    prompt_file = tmp_path / 'test_python.prompt'
+    prompt_file.write_text('write a function that prints hello')
+
+    input_file_paths = {'prompt_file': str(prompt_file)}
+    # CLI flag (typescript) should override both filename (python) and config (javascript)
+    command_options = {
+        'language': 'typescript',  # Explicit CLI flag
+        'default_language': 'javascript'  # Config setting
+    }
+
+    # Mock for typescript (CLI flag should win)
+    mock_output_paths = {'output': str(tmp_path / 'output.ts')}
+
+    with patch('pdd.construct_paths.get_extension', return_value='.ts'), \
+         patch('pdd.construct_paths.get_language', return_value='typescript'), \
+         patch('pdd.construct_paths.generate_output_paths', return_value=mock_output_paths):
+
+        _, _, _, language = construct_paths(
+            input_file_paths,
+            force=True,
+            quiet=True,
+            command='generate',
+            command_options=command_options
+        )
+
+        # CLI flag should have highest priority
+        assert language == 'typescript', \
+            f"Expected 'typescript' from CLI flag, got '{language}' (should override all other sources)"
+
+
+def test_code_extension_overrides_default_language(tmpdir):
+    """
+    Test Case 5: Code file extension should override default_language
+
+    Priority check: When a code file exists, its extension should take precedence
+    over default_language setting.
+
+    This test PASSES on current code because code file extension detection (step 2)
+    happens before the missing default_language fallback (step 4). This verifies
+    the fix maintains correct priority ordering.
+    """
+    tmp_path = Path(str(tmpdir))
+
+    # Create prompt file without language suffix
+    prompt_file = tmp_path / 'test.prompt'
+    prompt_file.write_text('write a function that prints hello')
+
+    # Create code file with .go extension
+    code_file = tmp_path / 'test.go'
+    code_file.write_text('package main')
+
+    input_file_paths = {
+        'prompt_file': str(prompt_file),
+        'code_file': str(code_file)
+    }
+    # Config says python, but code file is .go
+    command_options = {'default_language': 'python'}
+
+    # Mock for go (code extension should win)
+    mock_output_paths = {'output': str(tmp_path / 'output.go')}
+
+    def mock_get_language_func(ext_or_name):
+        if ext_or_name == '.go':
+            return 'go'
+        return None
+
+    def mock_get_extension_func(lang):
+        if lang == 'go':
+            return '.go'
+        return ''
+
+    with patch('pdd.construct_paths.get_extension', side_effect=mock_get_extension_func), \
+         patch('pdd.construct_paths.get_language', side_effect=mock_get_language_func), \
+         patch('pdd.construct_paths.generate_output_paths', return_value=mock_output_paths):
+
+        _, _, _, language = construct_paths(
+            input_file_paths,
+            force=True,
+            quiet=True,
+            command='generate',
+            command_options=command_options
+        )
+
+        # Code file extension should win over default_language
+        assert language == 'go', \
+            f"Expected 'go' from code file extension, got '{language}' (default_language should not override)"
+
+
+def test_error_when_no_language_available(tmpdir):
+    """
+    Test Case 6: Clear error when no language source exists
+
+    Edge case: When there's no CLI flag, no code file, no filename suffix, and no
+    default_language setting, the error should be clear and helpful.
+
+    This test PASSES on current code and should continue to pass after the fix.
+    It verifies that the error handling still works when truly no language source exists.
+    """
+    tmp_path = Path(str(tmpdir))
+
+    # Create prompt file without language suffix
+    prompt_file = tmp_path / 'test.prompt'
+    prompt_file.write_text('write a function that prints hello')
+
+    input_file_paths = {'prompt_file': str(prompt_file)}
+    # NO default_language setting
+    command_options = {}
+
+    # Mock to return None for all language lookups
+    mock_output_paths = {'output': str(tmp_path / 'output')}
+
+    with patch('pdd.construct_paths.get_extension', return_value=''), \
+         patch('pdd.construct_paths.get_language', return_value=None), \
+         patch('pdd.construct_paths.generate_output_paths', return_value=mock_output_paths):
+
+        # Should raise clear error when no language available
+        with pytest.raises(ValueError, match="Could not determine language"):
+            _, _, _, language = construct_paths(
+                input_file_paths,
+                force=True,
+                quiet=True,
+                command='generate',
+                command_options=command_options
+            )
+
