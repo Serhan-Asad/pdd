@@ -85,14 +85,16 @@ def write_to_error_file(file_path: str, content: str) -> None:
                     console.print(f"[red]Error writing to fallback location: {str(e)}[/red]")
                     try:
                         os.unlink(tmp_path)
-                    except:
+                    except (OSError, FileNotFoundError):
+                        # File already deleted or doesn't exist
                         pass
                     raise
         except Exception as e:
             console.print(f"[red]Error writing to error file: {str(e)}[/red]")
             try:
                 os.unlink(tmp_path)
-            except:
+            except (OSError, FileNotFoundError):
+                # File already deleted or doesn't exist
                 pass
             raise
     except Exception as e:

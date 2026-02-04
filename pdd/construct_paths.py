@@ -263,7 +263,8 @@ def detect_context_for_file(file_path: str, repo_root: Optional[str] = None) -> 
                 import git
                 repo = git.Repo(file_path, search_parent_directories=True)
                 repo_root = repo.working_tree_dir
-            except:
+            except (ImportError, Exception):
+                # Git not available or not a git repository
                 repo_root = os.getcwd()
 
     # Make file_path relative to repo_root for matching

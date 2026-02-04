@@ -546,7 +546,8 @@ def _run_with_provider(
             if not data and lines:
                 try:
                     data = json.loads(lines[-1])
-                except:
+                except (json.JSONDecodeError, ValueError):
+                    # Last line is not valid JSON
                     pass
         else:
             data = json.loads(output_str)

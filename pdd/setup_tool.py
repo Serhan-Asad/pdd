@@ -290,7 +290,8 @@ def detect_shell() -> str:
         shell_path = os.getenv('SHELL', '/bin/bash')
         shell_name = os.path.basename(shell_path)
         return shell_name
-    except:
+    except Exception:
+        # Fallback to bash if shell detection fails
         return 'bash'
 
 def get_shell_init_file(shell: str) -> str:
