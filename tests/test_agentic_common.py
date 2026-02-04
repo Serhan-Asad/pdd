@@ -1695,3 +1695,75 @@ contexts:
         # Should fall back to shutil.which result
         assert result == "/valid/path/claude", \
             f"Should fall back to PATH when .pddrc path is invalid, got: {result}"
+
+
+def test_gemini_cli_v0_27_uses_p_flag_for_non_interactive_mode(mock_cwd, mock_env, mock_load_model_data, mock_shutil_which, mock_subprocess):
+    """Verify Gemini CLI v0.27.0+ uses -p flag for non-interactive mode.
+
+    Issue #68: Gemini CLI v0.27.0 changed behavior - positional arguments now
+    default to interactive mode, causing agentic commands to hang. The fix is
+    to use the -p flag for non-interactive (headless) execution.
+
+    Historical Context:
+    - v0.0.133 removed the -p flag because it "passed text literally"
+    - Gemini CLI v0.27.0 changed the API, requiring -p for non-interactive mode
+    - Without -p, Gemini CLI waits for interactive input and hangs
+
+    This test verifies the corrected behavior: command includes -p flag.
+    """
+    # Setup: Only Google available
+    def which_side_effect(cmd):
+        return "/bin/gemini" if cmd == "gemini" else None
+    mock_shutil_which.side_effect = which_side_effect
+    os.environ["GEMINI_API_KEY"] = "key"
+
+    mock_output = {
+        "response": "Task completed successfully.",
+        "stats": {
+            "models": {
+                "gemini-1.5-flash": {"tokens": {"prompt": 1000, "candidates": 1000}}
+            }
+        }
+    }
+    mock_subprocess.return_value.returncode = 0
+    mock_subprocess.return_value.stdout = json.dumps(mock_output)
+    mock_subprocess.return_value.stderr = ""
+
+    instruction = "Fix the failing tests in the code"
+    success, msg, cost, provider = run_agentic_task(instruction, mock_cwd)
+
+    assert success
+    assert provider == "google"
+    args, kwargs = mock_subprocess.call_args
+    cmd = args[0]
+
+    # CRITICAL: The -p flag MUST be present for non-interactive mode (Gemini CLI v0.27.0+)
+    assert "-p" in cmd, (
+        f"Gemini CLI v0.27.0+ requires -p flag for non-interactive mode. "
+        f"Without it, the CLI hangs waiting for interactive input. "
+        f"Command was: {cmd}"
+    )
+
+    # Verify the -p flag is positioned correctly before the prompt instruction
+    p_flag_index = cmd.index("-p")
+    # The argument after -p should be the prompt instruction
+    assert p_flag_index + 1 < len(cmd), "Command should have argument after -p flag"
+    prompt_arg = cmd[p_flag_index + 1]
+
+    # The prompt instruction should tell Gemini to read the prompt file
+    assert "Read the file" in prompt_arg or "read the file" in prompt_arg.lower(), (
+        f"Prompt argument should instruct Gemini to read the file. "
+        f"Got: {prompt_arg}"
+    )
+
+    # Verify the file reference uses just the filename (not full path)
+    # This allows Gemini to find the file in its working directory
+    assert ".agentic_prompt_" in prompt_arg, (
+        f"Prompt should reference the .agentic_prompt_*.txt file. "
+        f"Got: {prompt_arg}"
+    )
+
+    # Verify other required flags are still present
+    assert "--yolo" in cmd, "Command should include --yolo flag"
+    assert "--output-format" in cmd, "Command should include --output-format flag"
+    assert "json" in cmd, "Command should request JSON output format"
