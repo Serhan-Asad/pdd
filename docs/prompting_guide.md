@@ -201,9 +201,9 @@ The PDD preprocessor supports additional XML‑style tags to keep prompts clean,
   - Example: `Before step X <pdd>explain why we do this here</pdd>`
 
 - `<shell>…</shell>`
-  - Purpose: run a shell command and inline stdout at that position.
-  - Behavior: executes during non‑recursive preprocessing; on non‑zero exit, inserts a bracketed error with the exit code instead of failing the pipeline.
-  - Example: `<shell>git config --get user.name</shell>`
+  - Purpose: (DISABLED for security reasons) Previously: run a shell command and inline stdout at that position.
+  - Behavior: This tag is now ignored and its content is removed during preprocessing due to command injection vulnerabilities.
+  - Example: `<shell>DISABLED_COMMAND</shell>`
 
 - `<web>URL</web>`
   - Purpose: fetch the page (via Firecrawl) and inline the markdown content.
@@ -212,8 +212,7 @@ The PDD preprocessor supports additional XML‑style tags to keep prompts clean,
 
 > ⚠️ **Warning: Non-Deterministic Tags**
 >
-> `<shell>` and `<web>` introduce **non-determinism**:
-> - `<shell>` output varies by environment (different machines, different results)
+> `<web>` tags introduce **non-determinism**:
 > - `<web>` content changes over time (same URL, different content)
 >
 > **Impact:** Same prompt file → different generations on different machines/times
