@@ -62,8 +62,9 @@ def resolve_prompt_code_pair(code_file_path: str, quiet: bool = False, output_di
         import git
         repo = git.Repo(code_dir, search_parent_directories=True)
         repo_root = repo.working_tree_dir
-    except:
-        # If not a git repo, use the directory containing the code file
+    except Exception:
+        # If not a git repo or git import fails, use the directory containing the code file
+        # Catches git.InvalidGitRepositoryError, git.NoSuchPathError, ImportError, etc.
         pass
 
     # Determine the base prompts directory

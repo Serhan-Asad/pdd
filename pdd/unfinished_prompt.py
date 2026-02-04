@@ -105,7 +105,8 @@ def unfinished_prompt(
             rprint("[blue]Invoking LLM model...[/blue]")
             try:
                 rprint(f"Input text: {prompt_text}")
-            except:
+            except Exception:
+                # Fallback to plain print if rprint fails
                 print(f"Input text: {prompt_text}")
             rprint(f"Model strength: {strength}")
             rprint(f"Temperature: {temperature}")
