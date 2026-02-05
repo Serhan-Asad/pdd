@@ -483,13 +483,13 @@ def _run_with_provider(
             "--output-format", "json",
         ]
     elif provider == "google":
-        # Do NOT use -p flag for Gemini. The -p flag passes text literally,
-        # so passing a file path gives Gemini the path string instead of content.
-        # Instead, pass a short instruction as positional argument telling Gemini
-        # to read the prompt file (matches old _run_google_variants pattern).
+        # As of Gemini CLI v0.27.0, the -p flag is REQUIRED for non-interactive mode.
+        # Without -p, positional arguments default to interactive mode, causing hangs.
+        # We pass the instruction text (not file path) to -p to tell Gemini to read
+        # the prompt file using its tool access (matches old _run_google_variants pattern).
         cmd = [
             cli_path,
-            f"Read the file {prompt_path.name} for your full instructions and execute them.",
+            "-p", f"Read the file {prompt_path.name} for your full instructions and execute them.",
             "--yolo",
             "--output-format", "json"
         ]
