@@ -342,3 +342,162 @@ def test_cleanup_interactive_cancel(mock_cloud_config, mock_manager, runner, moc
 
     assert result.exit_code == 0
     assert "Cancelled" in result.output
+
+
+# --- Issue #469: Exit code and message tests ---
+
+
+@patch("pdd.commands.sessions.RemoteSessionManager")
+@patch("pdd.commands.sessions.CloudConfig")
+def test_cleanup_all_fail_shows_only_failure_message_and_exits_1(
+    mock_cloud_config, mock_manager_class, runner, mock_sessions
+):
+    """
+    Test for Issue #469: When all cleanup operations fail, should:
+    1. NOT display the success message (no green checkmark with "0 session(s)")
+    2. Display only the failure message
+    3. Exit with code 1 (failure)
+
+    This test will FAIL on the buggy code and PASS after the fix.
+    """
+    mock_cloud_config.get_jwt_token.return_value = "test-jwt-token"
+    mock_manager_class.list_sessions = AsyncMock(return_value=[mock_sessions[0]])  # One session
+
+    # Mock deregister to always fail
+    async def mock_deregister_fail():
+        raise Exception("Simulated network error")
+
+    mock_instance = MagicMock()
+    mock_instance.deregister = mock_deregister_fail
+    mock_manager_class.return_value = mock_instance
+
+    result = runner.invoke(sessions, ["cleanup", "--all", "--force"])
+
+    # CRITICAL ASSERTIONS (these fail on buggy code):
+    # 1. Should NOT show success message when 0 sessions succeeded
+    assert "✓" not in result.output or "Successfully cleaned up 0" not in result.output, (
+        "Should NOT display success message when 0 sessions succeeded"
+    )
+
+    # 2. Should show failure message
+    assert "Failed to cleanup" in result.output, "Should display failure message"
+    assert "1 session(s)" in result.output or "Simulated network error" in result.output
+
+    # 3. Should exit with code 1 (FAILS on buggy code which exits with 0)
+    assert result.exit_code == 1, (
+        f"Expected exit code 1 when all cleanups fail, got {result.exit_code}"
+    )
+
+
+@patch("pdd.commands.sessions.RemoteSessionManager")
+@patch("pdd.commands.sessions.CloudConfig")
+def test_cleanup_all_succeed_shows_only_success_message_and_exits_0(
+    mock_cloud_config, mock_manager_class, runner, mock_sessions
+):
+    """
+    Test: When all cleanup operations succeed, should:
+    1. Display success message with correct count
+    2. NOT display failure message
+    3. Exit with code 0 (success)
+    """
+    mock_cloud_config.get_jwt_token.return_value = "test-jwt-token"
+    mock_manager_class.list_sessions = AsyncMock(return_value=mock_sessions)  # Two sessions
+
+    # Mock deregister to always succeed
+    mock_instance = MagicMock()
+    mock_instance.deregister = AsyncMock(return_value=None)
+    mock_manager_class.return_value = mock_instance
+
+    result = runner.invoke(sessions, ["cleanup", "--all", "--force"])
+
+    # Should show success message
+    assert "✓" in result.output, "Should display success checkmark"
+    assert "Successfully cleaned up 2 session(s)" in result.output, (
+        "Should display success message with correct count"
+    )
+
+    # Should NOT show failure message
+    assert "✗" not in result.output, "Should NOT display failure message when all succeed"
+
+    # Should exit with code 0
+    assert result.exit_code == 0, (
+        f"Expected exit code 0 when all cleanups succeed, got {result.exit_code}"
+    )
+
+
+@patch("pdd.commands.sessions.RemoteSessionManager")
+@patch("pdd.commands.sessions.CloudConfig")
+def test_cleanup_mixed_success_failure_shows_both_messages_and_exits_1(
+    mock_cloud_config, mock_manager_class, runner, mock_sessions
+):
+    """
+    Test: When some cleanups succeed and some fail, should:
+    1. Display both success and failure messages with correct counts
+    2. Exit with code 1 (failure takes precedence)
+    """
+    mock_cloud_config.get_jwt_token.return_value = "test-jwt-token"
+    mock_manager_class.list_sessions = AsyncMock(return_value=mock_sessions)  # Two sessions
+
+    # Mock deregister to succeed first time, fail second time
+    call_count = 0
+
+    async def mock_deregister_mixed():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise Exception("Failed to deregister second session")
+
+    mock_instance = MagicMock()
+    mock_instance.deregister = mock_deregister_mixed
+    mock_manager_class.return_value = mock_instance
+
+    result = runner.invoke(sessions, ["cleanup", "--all", "--force"])
+
+    # Should show both messages
+    assert "✓" in result.output, "Should display success checkmark"
+    assert "Successfully cleaned up 1 session(s)" in result.output, (
+        "Should display success message with count 1"
+    )
+    assert "✗" in result.output, "Should display failure marker"
+    assert "Failed to cleanup 1 session(s)" in result.output, (
+        "Should display failure message with count 1"
+    )
+
+    # Should exit with code 1 when any failures occur
+    assert result.exit_code == 1, (
+        f"Expected exit code 1 when some cleanups fail, got {result.exit_code}"
+    )
+
+
+@patch("pdd.commands.sessions.RemoteSessionManager")
+@patch("pdd.commands.sessions.CloudConfig")
+def test_cleanup_zero_sessions_processed_exits_0(
+    mock_cloud_config, mock_manager, runner
+):
+    """
+    Test: When no sessions are processed (e.g., no stale sessions found), should:
+    1. Display appropriate message
+    2. Exit with code 0 (this is not an error condition)
+    """
+    mock_cloud_config.get_jwt_token.return_value = "test-jwt-token"
+    # All sessions are active (none are stale)
+    active_sessions = [
+        MockSessionInfo(
+            session_id="active-1",
+            project_name="project1",
+            cloud_url="https://pdd.dev/connect/active-1",
+            status="active",
+            last_heartbeat="2024-01-01T10:00:00Z",
+        ),
+    ]
+    mock_manager.list_sessions = AsyncMock(return_value=active_sessions)
+
+    result = runner.invoke(sessions, ["cleanup", "--stale", "--force"])
+
+    # Should show appropriate message
+    assert "No stale sessions found" in result.output or "No sessions" in result.output
+
+    # Should exit with code 0 (not an error - just nothing to do)
+    assert result.exit_code == 0, (
+        f"Expected exit code 0 when no sessions need cleanup, got {result.exit_code}"
+    )
