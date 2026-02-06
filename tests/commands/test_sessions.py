@@ -325,7 +325,8 @@ def test_cleanup_partial_failure(mock_cloud_config, mock_manager_class, runner, 
 
     result = runner.invoke(sessions, ["cleanup", "--all", "--force"])
 
-    assert result.exit_code == 0
+    # Exit code should be 1 when any failures occur (even partial failures)
+    assert result.exit_code == 1
     # Should show at least one success and one failure
     assert "Successfully cleaned up" in result.output or "Failed to cleanup" in result.output
 
