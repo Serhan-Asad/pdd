@@ -374,19 +374,22 @@ def test_cleanup_all_fail_shows_only_failure_message_and_exits_1(
     result = runner.invoke(sessions, ["cleanup", "--all", "--force"])
 
     # CRITICAL ASSERTIONS (these fail on buggy code):
-    # 1. Should NOT show success message when 0 sessions succeeded
-    assert "✓" not in result.output or "Successfully cleaned up 0" not in result.output, (
-        "Should NOT display success message when 0 sessions succeeded"
-    )
 
-    # 2. Should show failure message
-    assert "Failed to cleanup" in result.output, "Should display failure message"
-    assert "1 session(s)" in result.output or "Simulated network error" in result.output
-
-    # 3. Should exit with code 1 (FAILS on buggy code which exits with 0)
+    # 1. Exit code must be 1 when all cleanups fail (for automation/scripts)
     assert result.exit_code == 1, (
         f"Expected exit code 1 when all cleanups fail, got {result.exit_code}"
     )
+
+    # 2. Must NOT show misleading success message with 0 count
+    assert "Successfully cleaned up 0" not in result.output, (
+        f"Should NOT display 'Successfully cleaned up 0' when all cleanups fail.\n"
+        f"This is misleading - a green checkmark implies success.\n"
+        f"Actual output:\n{result.output}"
+    )
+
+    # 3. Should show failure message with correct count
+    assert "Failed to cleanup" in result.output, "Should display failure message"
+    assert "1 session(s)" in result.output, "Should show failure count"
 
 
 @patch("pdd.commands.sessions.RemoteSessionManager")
