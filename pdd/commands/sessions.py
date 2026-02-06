@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from typing import Any, Dict, List, Optional
 
 import click
@@ -286,7 +285,7 @@ def cleanup_sessions(cleanup_all: bool, cleanup_stale: bool, force: bool) -> Non
 
     if fail_count > 0:
         console.print(f"[bold red]✗[/bold red] Failed to cleanup {fail_count} session(s)")
-        sys.exit(1)  # Exit with error code
+        raise click.exceptions.Exit(1)  # Exit with error code
 
     # Handle edge case where nothing was cleaned
     if success_count == 0 and fail_count == 0:
