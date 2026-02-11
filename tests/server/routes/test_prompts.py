@@ -1221,3 +1221,60 @@ class TestCloudEnabledLLMCalls:
                 "use_cloud should not be explicitly set to False - "
                 "this prevents cloud auto-detection"
             )
+
+
+@pytest.mark.asyncio
+async def test_get_available_models_default_model_none(prompts_test_env):
+    """Test that get_available_models doesn't crash when DEFAULT_BASE_MODEL is None.
+
+    Bug #85: When PDD_MODEL_DEFAULT env var is unset, DEFAULT_BASE_MODEL is None,
+    which causes a Pydantic ValidationError because ModelsResponse.default_model
+    expects str, not None. This results in HTTP 500 for all users.
+    """
+    import pandas as pd
+
+    get_available_models = prompts_test_env['get_available_models']
+    mock_llm_invoke = prompts_test_env['mock_llm_invoke']
+
+    # Simulate PDD_MODEL_DEFAULT not being set (the default for all users)
+    mock_llm_invoke.DEFAULT_BASE_MODEL = None
+
+    mock_df = pd.DataFrame([
+        {
+            'model': 'claude-sonnet-4-20250514',
+            'provider': 'Anthropic',
+            'input': 3.0,
+            'output': 15.0,
+            'coding_arena_elo': 1400,
+            'max_reasoning_tokens': 0,
+            'reasoning_type': 'none',
+            'structured_output': True,
+        },
+    ])
+    mock_llm_invoke._load_model_data.return_value = mock_df
+
+    # This should NOT raise a ValidationError / HTTP 500
+    response = await get_available_models()
+
+    assert len(response.models) == 1
+    # default_model should fall back to a valid value, not None
+    assert response.default_model is not None
+    assert isinstance(response.default_model, str)
+
+
+@pytest.mark.asyncio
+async def test_get_available_models_default_model_none_empty_models(prompts_test_env):
+    """Test that get_available_models handles None default + empty model list gracefully."""
+    import pandas as pd
+
+    get_available_models = prompts_test_env['get_available_models']
+    mock_llm_invoke = prompts_test_env['mock_llm_invoke']
+
+    mock_llm_invoke.DEFAULT_BASE_MODEL = None
+    mock_llm_invoke._load_model_data.return_value = pd.DataFrame()
+
+    # Should not crash even with no models and no default
+    response = await get_available_models()
+
+    assert len(response.models) == 0
+    assert isinstance(response.default_model, str)

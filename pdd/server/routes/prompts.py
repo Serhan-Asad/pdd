@@ -511,7 +511,7 @@ async def get_available_models():
 
         return ModelsResponse(
             models=models,
-            default_model=DEFAULT_BASE_MODEL,
+            default_model=DEFAULT_BASE_MODEL or (models[0].model if models else ""),
         )
 
     except Exception as e:
