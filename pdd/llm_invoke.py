@@ -7,6 +7,9 @@ import litellm
 import logging # ADDED FOR DETAILED LOGGING
 import importlib.resources
 from litellm.caching.caching import Cache  # Fix for LiteLLM v1.75.5+
+from rich.console import Console
+
+console = Console()
 
 # --- Configure Standard Python Logging ---
 logger = logging.getLogger("pdd.llm_invoke")
@@ -75,6 +78,18 @@ def setup_file_logging(log_file_path=None):
         logger.info(f"File logging configured to: {log_file_path}")
     except Exception as e:
         logger.warning(f"Failed to set up file logging: {e}")
+
+def set_quiet_mode():
+    """Suppress all non-error output from PDD and LiteLLM loggers."""
+    logger.setLevel(logging.WARNING)
+    litellm_logger.setLevel(logging.WARNING)
+    # Also suppress the top-level LiteLLM logger
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    try:
+        litellm.set_verbose = False
+        litellm.suppress_debug_info = True
+    except Exception:
+        pass
 
 # Function to set verbose logging
 def set_verbose_logging(verbose=False):

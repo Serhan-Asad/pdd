@@ -148,7 +148,7 @@ class TestLlmInvokeQuietMode:
     def test_cli_quiet_calls_set_quiet_mode(self):
         """The CLI --quiet flag should actually call set_quiet_mode()."""
         from click.testing import CliRunner
-        from pdd.core.cli import cli
+        from pdd.cli import cli
 
         runner = CliRunner(mix_stderr=False)
         with patch("pdd.core.cli.auto_update"):
@@ -189,7 +189,7 @@ class TestAutoUpdateQuietMode:
     def test_auto_update_skipped_when_quiet(self):
         """--quiet should skip the entire auto-update check, not just the status message."""
         from click.testing import CliRunner
-        from pdd.core.cli import cli
+        from pdd.cli import cli
 
         runner = CliRunner(mix_stderr=False)
         with patch("pdd.core.cli.auto_update") as mock_update:
@@ -201,7 +201,7 @@ class TestAutoUpdateQuietMode:
     def test_auto_update_runs_without_quiet(self):
         """Without --quiet, auto-update should still run (regression guard)."""
         from click.testing import CliRunner
-        from pdd.core.cli import cli
+        from pdd.cli import cli
 
         runner = CliRunner(mix_stderr=False)
         with patch("pdd.core.cli.auto_update") as mock_update, \

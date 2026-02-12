@@ -356,9 +356,15 @@ def cli(
         ctx.obj["_stdout_capture"] = stdout_capture
         ctx.obj["_stderr_capture"] = stderr_capture
 
-    # Suppress verbose if quiet is enabled
+    # Suppress verbose if quiet is enabled; reset preprocess quiet state otherwise
+    import pdd.preprocess as _preprocess_mod
     if quiet:
         ctx.obj["verbose"] = False
+        from pdd.llm_invoke import set_quiet_mode
+        set_quiet_mode()
+        _preprocess_mod._quiet_mode = True
+    else:
+        _preprocess_mod._quiet_mode = False
 
     # Warn users who have not completed interactive setup unless they are running it now
     if _should_show_onboarding_reminder(ctx):
@@ -392,12 +398,10 @@ def cli(
                 f"Unknown context '{context_override}'. Available contexts: {', '.join(names)}"
             )
 
-    # Perform auto-update check unless disabled
-    if os.getenv("PDD_AUTO_UPDATE", "true").lower() != "false":
+    # Perform auto-update check unless disabled (skip entirely in quiet mode)
+    if not quiet and os.getenv("PDD_AUTO_UPDATE", "true").lower() != "false":
         try:
-            if not quiet:
-                console.print("[info]Checking for updates...[/info]")
-            # Removed quiet=quiet argument as it caused TypeError
+            console.print("[info]Checking for updates...[/info]")
             auto_update()
         except Exception as exception:  # Using more descriptive name
             if not quiet:
