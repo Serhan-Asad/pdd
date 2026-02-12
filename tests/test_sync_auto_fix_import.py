@@ -102,6 +102,9 @@ class TestAutoFixImportNoConfirmation:
         req_file = tmp_path / "requirements.txt"
         req_file.write_text("click\nrich\n", encoding="utf-8")
 
+        # Create a .git marker so the function finds the project root
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
         with patch("pdd.sync_orchestration.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
 
@@ -109,6 +112,8 @@ class TestAutoFixImportNoConfirmation:
                 MODULE_NOT_FOUND_ERROR,
                 tmp_code_file,
                 tmp_example_file,
+                force=True,
+                quiet=True,
             )
 
             # BUG: requirements.txt is never updated with the new package
@@ -122,7 +127,8 @@ class TestAutoFixImportNoConfirmation:
 
         The function should print 'Auto-installed: requests' so users know what happened.
         """
-        with patch("pdd.sync_orchestration.subprocess.run") as mock_run:
+        with patch("pdd.sync_orchestration.subprocess.run") as mock_run, \
+             patch("pdd.sync_orchestration.click.confirm", return_value=True):
             mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
 
             fixed, msg = _try_auto_fix_import_error(
