@@ -452,6 +452,7 @@ def _try_auto_fix_import_error(
     error_output: str,
     code_file: Path,
     example_file: Path,
+    force: bool = False,
 ) -> tuple[bool, str]:
     """
     Try to automatically fix common import errors before calling expensive agentic fix.
@@ -518,7 +519,10 @@ def _try_auto_fix_import_error(
                 return False, f"Failed to fix import path: {e}"
 
         else:
-            # It's an external package - try pip install
+            # It's an external package - try pip install (with user consent)
+            if not force:
+                if not click.confirm(f"Install missing package '{top_level_package}'?", default=False):
+                    return False, f"User declined to install {top_level_package}"
             try:
                 result = subprocess.run(
                     [sys.executable, '-m', 'pip', 'install', top_level_package],
@@ -1446,7 +1450,8 @@ def sync_orchestration(
                                     auto_fixed, auto_fix_msg = _try_auto_fix_import_error(
                                         crash_log_content,
                                         pdd_files['code'],
-                                        pdd_files['example']
+                                        pdd_files['example'],
+                                        force=force,
                                     )
                                     if auto_fixed:
                                         log_event(basename, language, "auto_fix_attempted", {"message": auto_fix_msg}, invocation_mode="sync")

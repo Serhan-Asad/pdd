@@ -61,15 +61,24 @@ class TestIssue494AutoFixNoConsentE2E:
 
         from pdd.sync_orchestration import _try_auto_fix_import_error
 
-        # Act: call through the real function — only subprocess is mocked
-        with patch('pdd.sync_orchestration.subprocess.run', return_value=pip_result) as mock_subprocess:
+        # Verify that click.confirm is called before pip install.
+        # We mock both subprocess.run (to prevent real pip) and click.confirm
+        # (to prevent stdin read and to track the call).
+        confirm_called = False
+
+        def track_confirm(*args, **kwargs):
+            nonlocal confirm_called
+            confirm_called = True
+            return True
+
+        with patch('pdd.sync_orchestration.subprocess.run', return_value=pip_result) as mock_subprocess, \
+             patch('pdd.sync_orchestration.click') as mock_click:
+            mock_click.confirm = track_confirm
             fixed, msg = _try_auto_fix_import_error(
                 error_output, code_file, example_file
             )
 
-        # Assert: On the buggy code, pip install runs (subprocess.run is called)
-        # but click.confirm was never consulted. We verify this by checking that
-        # subprocess.run WAS called with pip install args — proving the bug.
+        # Verify pip install was called (function reaches the install path)
         pip_calls = [
             c for c in mock_subprocess.call_args_list
             if 'pip' in str(c) and 'install' in str(c)
@@ -79,23 +88,7 @@ class TestIssue494AutoFixNoConsentE2E:
             "the pip install path)"
         )
 
-        # NOW verify the bug: click.confirm should have been called but wasn't.
-        # We patch click at the module level to intercept any confirm() calls.
-        confirm_called = False
-
-        def track_confirm(*args, **kwargs):
-            nonlocal confirm_called
-            confirm_called = True
-            return True
-
-        with patch('pdd.sync_orchestration.subprocess.run', return_value=pip_result), \
-             patch('pdd.sync_orchestration.click') as mock_click:
-            mock_click.confirm = track_confirm
-            fixed, msg = _try_auto_fix_import_error(
-                error_output, code_file, example_file
-            )
-
-        # This assertion FAILS on the buggy code: confirm is never called
+        # Verify click.confirm was called before pip install
         assert confirm_called, (
             "BUG: pip install ran without calling click.confirm() first. "
             "The user was never asked for consent before modifying their "
