@@ -6,6 +6,7 @@ INFO logs, Rich panels, warnings, and success messages. Currently FAILS
 because preprocess() unconditionally prints Rich panels regardless of --quiet.
 """
 
+import os
 import pytest
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
@@ -27,6 +28,12 @@ NOISY_PATTERNS = [
     "Preprocessing complete",
     "Doubling curly brackets",
     "Successfully loaded prompt",
+    "Checking for updates",
+    "Cloud execution failed",
+    "Cloud HTTP error",
+    "falling back to local",
+    "LiteLLM completion()",
+    "Wrapper: Completed Call",
 ]
 
 
@@ -42,7 +49,8 @@ class TestQuietFlagE2E:
         """Run generate command with mocked LLM generators so preprocess runs."""
         with patch("pdd.code_generator_main.local_code_generator_func") as mock_local, \
              patch("pdd.code_generator_main.incremental_code_generator_func") as mock_incr, \
-             patch("pdd.code_generator_main.requests") as mock_requests:
+             patch("pdd.code_generator_main.requests") as mock_requests, \
+             patch("pdd.core.cli.auto_update"):
             mock_local.return_value = ("def hello(): return 'hello'", 0.01, "mock-model")
             mock_incr.return_value = ("def hello(): return 'hello'", False, 0.01, "mock-model")
             # Make cloud check fail so it goes to local path
@@ -83,8 +91,44 @@ class TestQuietFlagE2E:
     def test_quiet_flag_still_shows_errors(self, tmp_path):
         """pdd --quiet generate with nonexistent file should still show error."""
         runner = CliRunner(mix_stderr=False)
-        result = runner.invoke(cli, ["--quiet", "generate", str(tmp_path / "nonexistent.prompt")])
+        with patch("pdd.core.cli.auto_update"):
+            result = runner.invoke(cli, ["--quiet", "generate", str(tmp_path / "nonexistent.prompt")])
 
-        assert result.exit_code != 0 or "does not exist" in result.output, (
-            "Errors should still be shown even in quiet mode"
+        assert result.exit_code != 0, (
+            f"Expected non-zero exit code for nonexistent file, got {result.exit_code}"
+        )
+        # Error message may appear in stdout or stderr depending on Click's handling
+        combined = (result.output or "") + (getattr(result, "stderr", "") or "")
+        assert "does not exist" in combined or "Error" in combined or result.exit_code == 2, (
+            f"Errors should still surface even in quiet mode.\n"
+            f"stdout: {result.output}\nstderr: {getattr(result, 'stderr', '')}"
+        )
+
+    def test_quiet_suppresses_auto_update(self):
+        """pdd --quiet should not run auto_update at all."""
+        runner = CliRunner(mix_stderr=False)
+        with patch("pdd.core.cli.auto_update") as mock_update:
+            runner.invoke(cli, ["--quiet", "which"])
+            mock_update.assert_not_called(), (
+                "auto_update() should be completely skipped in quiet mode"
+            )
+
+    def test_quiet_suppresses_info_log_lines(self, prompt_file):
+        """pdd --quiet generate should not show any INFO log lines in output."""
+        runner = CliRunner(mix_stderr=False)
+        result = self._run_generate(runner, ["--quiet", "generate"], prompt_file)
+
+        stdout = result.output
+        # Check for common INFO log patterns
+        info_patterns = [
+            "- INFO -",
+            "INFO:",
+            "pdd.llm_invoke - INFO",
+            "LiteLLM:INFO",
+        ]
+        found = [p for p in info_patterns if p in stdout]
+        assert not found, (
+            f"--quiet should suppress all INFO log lines.\n"
+            f"Found: {found}\n"
+            f"Full output:\n{stdout}"
         )
