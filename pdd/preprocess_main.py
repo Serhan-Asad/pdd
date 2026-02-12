@@ -87,7 +87,7 @@ def preprocess_main(
             processed_prompt = xml_tagged
         else:
             # Preprocess the prompt
-            processed_prompt = preprocess(prompt, recursive, double, exclude_keys=exclude)
+            processed_prompt = preprocess(prompt, recursive, double, exclude_keys=exclude, quiet=ctx.obj.get("quiet", False))
             total_cost, model_name = 0.0, "N/A"
 
         # Save the preprocessed prompt

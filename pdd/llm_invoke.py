@@ -12,7 +12,7 @@ from litellm.caching.caching import Cache  # Fix for LiteLLM v1.75.5+
 logger = logging.getLogger("pdd.llm_invoke")
 
 # Environment variable to control log level
-PDD_LOG_LEVEL = os.getenv("PDD_LOG_LEVEL", "INFO")
+PDD_LOG_LEVEL = os.getenv("PDD_LOG_LEVEL", "WARNING")
 PRODUCTION_MODE = os.getenv("PDD_ENVIRONMENT") == "production"
 
 # Set default level based on environment
