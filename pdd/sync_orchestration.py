@@ -448,10 +448,65 @@ def _detect_example_errors(output: str) -> tuple[bool, str]:
     return False, ''
 
 
+def _update_dependency_file(package_name: str, code_file: Path, quiet: bool = False) -> None:
+    """Detect and update the project's dependency file after a successful pip install."""
+    # Search upward from code_file for a project root indicator
+    search_dir = code_file.parent.resolve()
+    project_root = None
+    for parent in [search_dir] + list(search_dir.parents):
+        if (parent / '.pddrc').exists() or (parent / '.git').exists():
+            project_root = parent
+            break
+    if project_root is None:
+        project_root = search_dir
+
+    # Check for dependency files in priority order
+    req_txt = project_root / 'requirements.txt'
+    pyproject = project_root / 'pyproject.toml'
+    setup_py = project_root / 'setup.py'
+    setup_cfg = project_root / 'setup.cfg'
+
+    if req_txt.exists():
+        content = req_txt.read_text(encoding='utf-8')
+        if package_name not in content.splitlines():
+            with open(req_txt, 'a', encoding='utf-8') as f:
+                f.write(f"{package_name}\n")
+            if not quiet:
+                click.echo(f"Added '{package_name}' to requirements.txt")
+    elif pyproject.exists():
+        import tomllib
+        try:
+            with open(pyproject, 'rb') as f:
+                data = tomllib.load(f)
+            deps = data.get('project', {}).get('dependencies', [])
+            if package_name not in deps:
+                content = pyproject.read_text(encoding='utf-8')
+                if '[project.dependencies]' in content or 'dependencies = [' in content:
+                    # Simple append to dependencies list
+                    content = content.replace(
+                        'dependencies = [',
+                        f'dependencies = [\n    "{package_name}",',
+                        1
+                    )
+                    pyproject.write_text(content, encoding='utf-8')
+                    if not quiet:
+                        click.echo(f"Added '{package_name}' to pyproject.toml [project.dependencies]")
+        except Exception:
+            pass
+    elif setup_py.exists() or setup_cfg.exists():
+        if not quiet:
+            click.echo(f"Note: Please add '{package_name}' to your project dependencies manually")
+    else:
+        if not quiet:
+            click.echo(f"Note: No dependency file found. Please add '{package_name}' to your project dependencies manually")
+
+
 def _try_auto_fix_import_error(
     error_output: str,
     code_file: Path,
     example_file: Path,
+    force: bool = False,
+    quiet: bool = False,
 ) -> tuple[bool, str]:
     """
     Try to automatically fix common import errors before calling expensive agentic fix.
@@ -519,6 +574,16 @@ def _try_auto_fix_import_error(
 
         else:
             # It's an external package - try pip install
+            if not force:
+                try:
+                    if not click.confirm(
+                        f"Auto-install missing package '{top_level_package}' via pip?",
+                        default=True,
+                    ):
+                        return False, f"User declined to install {top_level_package}"
+                except (click.Abort, EOFError):
+                    # Headless/no-TTY environment — auto-accept
+                    pass
             try:
                 result = subprocess.run(
                     [sys.executable, '-m', 'pip', 'install', top_level_package],
@@ -527,6 +592,10 @@ def _try_auto_fix_import_error(
                     timeout=120
                 )
                 if result.returncode == 0:
+                    if not quiet:
+                        click.echo(f"Auto-installed: {top_level_package}")
+                    # Update dependency file
+                    _update_dependency_file(top_level_package, code_file, quiet)
                     return True, f"Installed missing package: {top_level_package}"
                 else:
                     return False, f"Failed to install {top_level_package}: {result.stderr}"
@@ -1446,7 +1515,9 @@ def sync_orchestration(
                                     auto_fixed, auto_fix_msg = _try_auto_fix_import_error(
                                         crash_log_content,
                                         pdd_files['code'],
-                                        pdd_files['example']
+                                        pdd_files['example'],
+                                        force=force,
+                                        quiet=quiet
                                     )
                                     if auto_fixed:
                                         log_event(basename, language, "auto_fix_attempted", {"message": auto_fix_msg}, invocation_mode="sync")
