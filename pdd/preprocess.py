@@ -141,6 +141,8 @@ def preprocess(prompt: str, recursive: bool = False, double_curly_brackets: bool
         _dbg(f"Final length: {len(prompt)} characters")
         _write_debug_report()
         return prompt
+    except ValueError:
+        raise
     except Exception as e:
         console.print(f"[bold red]Error during preprocessing:[/bold red] {str(e)}")
         console.print(Panel(traceback.format_exc(), title="Error Details", style="red"))
@@ -196,10 +198,19 @@ def process_xml_tags(text: str, recursive: bool) -> str:
 
 def process_include_tags(text: str, recursive: bool) -> str:
     pattern = r'<include>(.*?)</include>'
+    _previously_expanded = set()  # Files expanded in prior iterations
+    _current_iteration = set()    # Files expanded in current iteration
     def replace_include(match):
         file_path = match.group(1).strip()
         try:
             full_path = get_file_path(file_path)
+            resolved = os.path.realpath(full_path)
+            if resolved in _previously_expanded:
+                raise ValueError(
+                    f"Circular include detected: {file_path} has already been included. "
+                    "Check for circular references between your included files."
+                )
+            _current_iteration.add(resolved)
             ext = os.path.splitext(file_path)[1].lower()
             image_extensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic']
             
@@ -254,6 +265,8 @@ def process_include_tags(text: str, recursive: bool) -> str:
             # First pass (recursive=True): leave the tag so a later env expansion can resolve it
             # Second pass (recursive=False): replace with a visible placeholder
             return match.group(0) if recursive else f"[File not found: {file_path}]"
+        except ValueError:
+            raise
         except Exception as e:
             console.print(f"[bold red]Error processing include:[/bold red] {str(e)}")
             _dbg(f"Error processing XML include {file_path}: {e}")
@@ -262,6 +275,8 @@ def process_include_tags(text: str, recursive: bool) -> str:
     current_text = text
     while prev_text != current_text:
         prev_text = current_text
+        _previously_expanded.update(_current_iteration)
+        _current_iteration.clear()
         code_spans = _extract_code_spans(current_text)
         def replace_include_with_spans(match):
             if _intersects_any_span(match.start(), match.end(), code_spans):

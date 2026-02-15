@@ -2079,3 +2079,46 @@ You are an expert Python engineer. Write the User data model.'''
     assert '{"name": "User"' in formatted
     assert '<pdd-interface>' in formatted
     assert '</pdd-interface>' in formatted
+
+
+# ============================================================================
+# Issue #526: Circular <include> tags cause infinite loop (non-recursive mode)
+# ============================================================================
+
+def test_circular_includes_non_recursive_raises_error(tmp_path):
+    """Issue #526: Circular includes (A→B→A) raise ValueError with cycle detection."""
+    file_a = tmp_path / "circular1.txt"
+    file_b = tmp_path / "circular2.txt"
+    file_a.write_text(f"Hello from A <include>{file_b}</include>")
+    file_b.write_text(f"Hello from B <include>{file_a}</include>")
+
+    prompt = f"<include>{file_a}</include>"
+
+    with pytest.raises(ValueError, match="[Cc]ircular include detected"):
+        preprocess(prompt, recursive=False, double_curly_brackets=False)
+
+
+def test_self_referencing_include_raises_error(tmp_path):
+    """Issue #526: A file that includes itself raises ValueError."""
+    self_file = tmp_path / "self.txt"
+    self_file.write_text(f"I include myself <include>{self_file}</include>")
+
+    prompt = f"<include>{self_file}</include>"
+
+    with pytest.raises(ValueError, match="[Cc]ircular include detected"):
+        preprocess(prompt, recursive=False, double_curly_brackets=False)
+
+
+def test_three_file_circular_chain_raises_error(tmp_path):
+    """Issue #526: A→B→C→A circular chain raises ValueError."""
+    file_a = tmp_path / "a.txt"
+    file_b = tmp_path / "b.txt"
+    file_c = tmp_path / "c.txt"
+    file_a.write_text(f"A includes <include>{file_b}</include>")
+    file_b.write_text(f"B includes <include>{file_c}</include>")
+    file_c.write_text(f"C includes <include>{file_a}</include>")
+
+    prompt = f"<include>{file_a}</include>"
+
+    with pytest.raises(ValueError, match="[Cc]ircular include detected"):
+        preprocess(prompt, recursive=False, double_curly_brackets=False)
