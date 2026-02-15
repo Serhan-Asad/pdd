@@ -2079,3 +2079,118 @@ You are an expert Python engineer. Write the User data model.'''
     assert '{"name": "User"' in formatted
     assert '<pdd-interface>' in formatted
     assert '</pdd-interface>' in formatted
+
+
+# ============================================================================
+# Issue #526: Circular <include> tags cause infinite loop (non-recursive mode)
+# ============================================================================
+
+def test_circular_includes_non_recursive_does_not_hang(tmp_path):
+    """Issue #526: Circular includes in non-recursive mode must not loop forever.
+
+    Two files include each other (A→B→A). Without cycle detection,
+    process_include_tags() loops infinitely because each iteration replaces
+    an include tag with content that contains a new include tag, so the text
+    always changes.
+
+    This test FAILS on the buggy code (times out) and PASSES once cycle
+    detection is added.
+    """
+    import threading
+
+    # Create real circular files on disk
+    file_a = tmp_path / "circular1.txt"
+    file_b = tmp_path / "circular2.txt"
+    file_a.write_text(f"Hello from A <include>{file_b}</include>")
+    file_b.write_text(f"Hello from B <include>{file_a}</include>")
+
+    prompt = f"<include>{file_a}</include>"
+
+    result_holder = [None]
+    error_holder = [None]
+
+    def run_preprocess():
+        try:
+            result_holder[0] = preprocess(prompt, recursive=False, double_curly_brackets=False)
+        except Exception as e:
+            error_holder[0] = e
+
+    t = threading.Thread(target=run_preprocess, daemon=True)
+    t.start()
+    t.join(timeout=5)  # 5 seconds is generous; non-circular resolves in <0.1s
+
+    if t.is_alive():
+        # The thread is still running — infinite loop confirmed
+        pytest.fail(
+            "Issue #526: process_include_tags() entered an infinite loop with "
+            "circular includes in non-recursive mode. The process never terminates."
+        )
+
+    # If it finished, it should have raised an error or returned with cycle info
+    if error_holder[0] is not None:
+        err_msg = str(error_holder[0]).lower()
+        assert "circular" in err_msg or "cycle" in err_msg or "recursion" in err_msg, (
+            f"Expected a circular dependency error, got: {error_holder[0]}"
+        )
+
+
+def test_self_referencing_include_does_not_hang(tmp_path):
+    """Issue #526: A file that includes itself must not loop forever."""
+    import threading
+
+    self_file = tmp_path / "self.txt"
+    self_file.write_text(f"I include myself <include>{self_file}</include>")
+
+    prompt = f"<include>{self_file}</include>"
+
+    result_holder = [None]
+    error_holder = [None]
+
+    def run_preprocess():
+        try:
+            result_holder[0] = preprocess(prompt, recursive=False, double_curly_brackets=False)
+        except Exception as e:
+            error_holder[0] = e
+
+    t = threading.Thread(target=run_preprocess, daemon=True)
+    t.start()
+    t.join(timeout=5)
+
+    if t.is_alive():
+        pytest.fail(
+            "Issue #526: Self-referencing include caused infinite loop "
+            "in non-recursive mode."
+        )
+
+
+def test_three_file_circular_chain_does_not_hang(tmp_path):
+    """Issue #526: A→B→C→A circular chain must not loop forever."""
+    import threading
+
+    file_a = tmp_path / "a.txt"
+    file_b = tmp_path / "b.txt"
+    file_c = tmp_path / "c.txt"
+    file_a.write_text(f"A includes <include>{file_b}</include>")
+    file_b.write_text(f"B includes <include>{file_c}</include>")
+    file_c.write_text(f"C includes <include>{file_a}</include>")
+
+    prompt = f"<include>{file_a}</include>"
+
+    result_holder = [None]
+    error_holder = [None]
+
+    def run_preprocess():
+        try:
+            result_holder[0] = preprocess(prompt, recursive=False, double_curly_brackets=False)
+        except Exception as e:
+            error_holder[0] = e
+
+    t = threading.Thread(target=run_preprocess, daemon=True)
+    t.start()
+    t.join(timeout=5)
+
+    if t.is_alive():
+        pytest.fail(
+            "Issue #526: Three-file circular include chain (A→B→C→A) "
+            "caused infinite loop in non-recursive mode."
+        )
