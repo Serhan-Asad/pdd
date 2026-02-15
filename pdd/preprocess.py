@@ -258,9 +258,17 @@ def process_include_tags(text: str, recursive: bool) -> str:
             console.print(f"[bold red]Error processing include:[/bold red] {str(e)}")
             _dbg(f"Error processing XML include {file_path}: {e}")
             return f"[Error processing include: {file_path}]"
+    MAX_INCLUDE_ITERATIONS = 100
     prev_text = ""
     current_text = text
+    iteration = 0
     while prev_text != current_text:
+        iteration += 1
+        if iteration > MAX_INCLUDE_ITERATIONS:
+            raise ValueError(
+                f"Circular include detected: exceeded {MAX_INCLUDE_ITERATIONS} iterations "
+                "of <include> tag expansion. Check for circular references between included files."
+            )
         prev_text = current_text
         code_spans = _extract_code_spans(current_text)
         def replace_include_with_spans(match):
