@@ -1,17 +1,111 @@
+## v0.0.149 (2026-02-14)
+
+### Feat
+
+- **Issue #467 cached-state validation across all orchestrators**: New `validate_cached_state()` helper in `agentic_common` scans step outputs for `FAILED:` prefixes and corrects `last_completed_step` on resume. Applied to architecture, change, test, and e2e-fix orchestrators — prevents the "blind resume" bug where the orchestrator trusted a corrupted `last_completed_step` and skipped failed steps.
+- **Interactive steering in sync orchestration**: After each `sync_determine_operation` call, users can now override the recommended operation via `maybe_steer_operation()`. Controlled by `no_steer` flag and `steer_timeout` parameter. Steering aborts are logged as `steering_override` events.
+- **Improved test prompt framing**: `code_generator_main` now instructs the LLM to study test files for type/data-structure hints, mock patterns, import paths, and fixture formats before generating code — instead of a generic "must pass these tests" instruction.
+- **`PddError` handling in core dump utility**: `_write_core_dump()` now correctly serializes `PddError` objects via `default=str`, with a dedicated test case for dump failures.
+- **Pytest project root discovery for sync**: Both `_execute_tests_and_create_run_report()` and the fix operation's pre-test run now use `_find_project_root(test_file)` to set `PYTHONPATH` and pass `--rootdir` / `-c /dev/null` to pytest, preventing parent config interference.
+- **Agentic test generation success handling refined**: `test_extend` operations for Python and TypeScript now always verify results by running tests locally, rather than trusting synthetic agent success reports. Only non-Python/TypeScript languages use synthetic `RunReport` for test_extend.
+
+### Fix
+
+- **Consecutive orchestrator failures no longer advance `last_completed_step`** — Previously, `step_num - 1` on failure created a "ratchet effect" where consecutive failures silently advanced the cursor through failed steps. Now `last_completed_step` stays unchanged on failure and failed outputs are stored with a `FAILED:` prefix.
+- **Change orchestrator step 9 no-files failure** — When step 9 produced no file changes, the state was saved with `last_completed_step = step_num - 1`, which could mark an earlier failed step as successful. Now stores `FAILED:` prefix and leaves `last_completed_step` unchanged.
+- **CLI commands registered before fixture snapshot in `test_cli`** — Added `register_commands()` call in the `setup_cli_environment` fixture to ensure all real commands (including `auth`) are present before snapshotting, fixing intermittent pytest-xdist failures.
+- **Test module pollution in `test_generate.py` and `test_fix.py`** — Evict `pdd.core.*` modules imported as side effects during mock windows, preventing `MagicMock` attributes from leaking into subsequent tests.
+- **Flaky CI tests made more resilient** — E2E tests (`test_e2e_issue_340`, `test_e2e_issue_342`) now gracefully skip on empty LLM responses, auth/network failures, and intermittent xdist command registration issues. Firecrawl help tests converted to `@pytest.mark.parametrize`.
+- **Regression test cost row validation relaxed** — `regression.sh` adjusted to handle variable cost output formats.
+
+### Build
+
+- **JUnit XML-based chunk balancing for cloud batch**: `balance-chunks.py` now parses `task_*_junit.xml` files for accurate per-test durations instead of distributing chunk wall-clock time proportionally. Falls back to log-based proportional method when no XML files exist.
+- **Profiling report in cloud batch results**: `collect-results.sh` now generates per-suite summary tables, pytest chunk distribution histograms, top-20 slowest individual tests, and chunk balance metrics (slowest/fastest ratio).
+- **Auto-update test durations on collect**: `collect-results.sh` automatically runs `balance-chunks.py record` after downloading results, keeping `test-durations.json` current.
+- **Raw result preservation**: New `KEEP_RAW=1` option in `make cloud-test` preserves raw JSON/XML files in `test-results/cloud-batch-raw/`.
+- **Setup time tracking**: Cloud batch result table now shows per-task setup time separately (`setup: Ns`) when available.
+- **Pytest chunks increased from 24 to 32** for better parallelism.
+- **Cloud regression tests hardened** — Fix and verify test sections now handle prerequisite generation failures gracefully (e.g., cloud rate limits) instead of cascading failures.
+
+### Refactor
+
+- **Orchestrator prompts updated for state validation**: All four orchestrator prompts (`architecture`, `change`, `test`, `e2e_fix`) updated to document `validate_cached_state()` usage, the `FAILED:` prefix convention, and the corrected failure-handling rule (keep `last_completed_step` unchanged, not `step_num - 1`).
+- **`agentic_common` prompt documents `validate_cached_state`**: New section in the shared prompt describes the function signature, behavior, and purpose.
+- **Sync orchestration prompt updated**: Documents interactive steering integration, `maybe_steer_operation()` API, progress callback for TUI, and `_find_project_root` usage.
+
+### Docs
+
+- **Grounding experiment Phases 4–7**: Added ungrounded-pdd arm (Phase 4), sync_orchestration module experiments (Phase 5), Pro vs Flash model comparison (Phase 6), and improved test prompt framing experiment (Phase 7) to `experiments/grounding/EXPERIMENT_LOG.md`.
+
+## v0.0.148 (2026-02-13)
+
+### Feat
+
+- **Resolve pipeline (fix → render → stitch)**: Review-app annotations can now be resolved end-to-end — Claude fixes the Remotion source, Remotion renders the affected section, and ffmpeg stitches the full video. Jobs are queued per-section with SSE progress streaming (`POST /api/annotations/:id/resolve`, `GET /api/jobs/:id/stream`).
+- **`searchInput` sent to cloud endpoint**: `pdd fix` and `pdd generate` now send the raw prompt path as `searchInput` to the cloud `generateCode` endpoint, enabling server-side few-shot retrieval.
+- **Duplicate detection checks resolution status**: The duplicate-check prompts for bug, change, and test workflows now verify whether the original issue was actually resolved before closing the new issue as a duplicate. Unresolved originals are treated as new issues.
+- **NOT_A_BUG early exit in e2e fix orchestrator**: Step 3 (root cause analysis) can now emit `NOT_A_BUG`, which stops the entire e2e fix workflow early instead of cycling to max iterations.
+- **Abort on 3 consecutive provider failures**: Bug orchestrator now detects when three consecutive steps fail with "All agent providers failed" and aborts early, saving cost and returning `changed_files` collected so far.
+- **`llm_invoke` prompt overhauled**: Rewritten prompt covers gpt-5 Responses API support, hierarchical logging configuration, `litellm.drop_params` control, soft fallback when base model is missing from CSV, and structured output via both Pydantic and raw JSON schema.
+- **Comprehensive `llm_invoke` test suite**: ~1,800 lines of new unit and integration tests covering pure JSON-schema utilities, Pydantic validation, model selection, reasoning parameters, cost tracking, and cloud mode detection.
+- **`llm_invoke` grounding experiments**: New experiment scripts and results measuring regeneration stability and retrieval quality for `llm_invoke` (grounded vs ungrounded, 5 runs each).
+- **Cloud testing documented in onboarding guide**: `make cloud-test` / `make cloud-test-quick` commands added to ONBOARDING_INTERNAL.md with setup and usage instructions.
+
+### Fix
+
+- **False cached steps on resume when all providers fail** — Bug orchestrator state saving used `step_num - 1` on failure, creating a "ratchet effect" where consecutive failures silently advanced `last_completed_step` through failed steps. Now `last_completed_step_to_save` stays at the last truly successful step. On resume, cached step outputs are validated by scanning for `FAILED:` prefixes.
+- **`changed_files` empty on e2e fix early exit** — When the e2e fix orchestrator exited early at Step 2 (`ALL_TESTS_PASS`), it returned an empty `changed_files` list because no LLM output was parsed. Now uses hash-based file change detection against a pre-workflow snapshot. Thanks James Levine!
+- **Duplicate detection closing unresolved issues** — Duplicate-check step was closing new issues as duplicates even when the original issue's workflow had failed. Prompts now require checking the original's workflow state and GitHub issue status before closing.
+- **`await safeWriteAnnotations` in resolve endpoint** — Resolve job reference was not persisted to the annotation before the HTTP response, causing a race where the client saw no `resolveJob` field.
+- Load prompt templates from local repo in tests so tests don't depend on installed package paths.
+- Use `--simple` flag in `test_update_silently_skips_logging` to avoid 600s agentic timeout.
+- Increase timeout to 300s for three flaky E2E tests.
+
+### Build
+
+- **Duration-based cloud batch chunk balancing**: New `balance-chunks.py` uses greedy bin-packing with per-file duration data (`test-durations.json`) to assign test files to cloud batch chunks, replacing alphabetical splitting. Includes `record` and `estimate` subcommands for maintaining duration data. Entrypoint falls back to alphabetical split if no durations file exists.
+- Updated `test-durations.json` with profiled data from balanced runs.
+
+### Refactor
+
+- **Prompts, data, and docs moved into `pdd/` package**: `prompts/`, `data/`, and `docs/prompting_guide.md` relocated to `pdd/prompts/`, `pdd/data/`, and `pdd/docs/prompting_guide.md` so they ship with the installed package. Top-level `data/` and `prompts/` are now symlinks for backward compatibility. Old `docs/prompting_guide.md` deleted.
+- **LLM invocation logic overhauled**: Removed interactive API key management, refactored logging to use hierarchical `pdd.llm_invoke` logger, added `litellm.drop_params` support, and restructured JSON schema utilities (`_ensure_all_properties_required`, `_add_additional_properties_false`).
+- **Bug orchestrator state validation on resume**: Added `cached_outputs` scan loop that detects FAILED prefixes and corrects `last_completed_step` before resuming, preventing skipping of failed steps.
+- Extracted `_detect_changed_files()` helper in e2e fix orchestrator for hash-based file change detection.
+
+### Docs
+
+- Added experiment log (`experiments/grounding/EXPERIMENT_LOG.md`) with results for retrieval quality and regeneration stability experiments.
+
 ## v0.0.147 (2026-02-12)
 
 ### Feat
 
-- Implement robust JSON extraction from LLM outputs to handle varied text formats and update the Fireworks model entry.
-- enhance agentic test command discovery via `language_format.csv` and expand analysis context for the review app.
-- Allow agent provider preference to be configured via environment variable and add tests for the review app.
-- Implement new grounding experiment infrastructure and a 3blue1brown review application demo.
-- Add Cloud Batch test results and update changelog with recent features, fixes, and build improvements.
+- **CSV-driven test command discovery**: `default_verify_cmd_for()` now reads `run_test_command` from `language_format.csv` instead of hardcoding per-language commands. JavaScript, TypeScript, TypeScript React, JavaScriptReact, Go, Rust, Swift, and C# now resolve test commands from CSV, reducing agentic fallback for common languages.
+- **Configurable agent provider preference**: New `PDD_AGENTIC_PROVIDER` environment variable overrides the default `anthropic,google,openai` provider order (e.g., `PDD_AGENTIC_PROVIDER=google` to use only Google). Replaces the former `AGENT_PROVIDER_PREFERENCE` constant with `get_agent_provider_preference()`.
+- **Gemini and Codex model override**: `GEMINI_MODEL` and `CODEX_MODEL` environment variables now pass `--model` to the Gemini CLI and Codex CLI respectively, mirroring the existing `CLAUDE_MODEL` support for Anthropic.
+- **LLM call timeout**: All `litellm.completion()` calls now enforce a 120-second timeout (`LLM_CALL_TIMEOUT`), preventing indefinite hangs on unresponsive providers.
+- **Grounding experiment infrastructure**: New `experiments/grounding/` directory with retrieval quality (Phase 1) and generation stability (Phase 2) experiments, including seed data, query sets, Makefile-driven automation, and CSV result tracking.
 
 ### Fix
 
-- update JS/TS test to expect explicit run_test_command values
-- resolve 4 cloud test failures (env fixtures, lock assertion, LLM timeout)
+- **JS/TS test expectations updated**: Tests now assert explicit `run_test_command` values (`node {file}`, `npx tsx {file}`) instead of expecting empty strings, matching the new CSV-driven discovery.
+- **Lock file assertion removed**: `test_auto_deps_lock.py` no longer asserts lock file existence after release, which was filelock-version-dependent. Serialization is still verified via execution order assertions.
+- **LLM timeout for cloud tests**: Added 120s timeout to all LLM retry paths in `llm_invoke.py`, fixing cloud test hangs on unresponsive providers.
+- **Test fixture parameters**: Added missing `mock_env` and `mock_load_model_data` fixtures to `TestAgenticDebugLogging` test that was failing in isolation.
+
+### Build
+
+- **PDD secrets dispatch workflow**: New `.github/workflows/pdd-secrets-dispatch.yml` for encrypted secret exchange between GitHub Actions runners via RSA+AES envelope encryption.
+- **Regression test cost control**: `regression.sh` and `sync_regression.sh` now set `PDD_MODEL_DEFAULT=vertex_ai/gemini-3-flash-preview` and `PDD_AGENTIC_PROVIDER=google,anthropic,openai` to force cheaper models during regression runs.
+- **Cloud Batch provider config**: `ci/cloud-batch/entrypoint.sh` now sets `PDD_AGENTIC_PROVIDER=google,anthropic,openai` to prefer Google's Gemini on Vertex AI in CI.
+- **GLM-5 model update**: Replaced Fireworks `glm-4p7` (Elo 1441, $0.60/$2.20) with `glm-5` (Elo 1451, $1.00/$3.20). Enabled `structured_output` for DeepSeek v3.2. Added `global` location for Gemini 3 Flash Preview and Claude Opus 4.6 on Vertex AI.
+
+### Refactor
+
+- **`AGENT_PROVIDER_PREFERENCE` → `get_agent_provider_preference()`**: Constant replaced with a function that reads from `PDD_AGENTIC_PROVIDER` env var, enabling runtime configuration without code changes.
+- **`default_verify_cmd_for()` resolution chain**: Refactored from a Python-only hardcoded function to a three-step resolution: CSV lookup → Python fallback → None (agentic mode).
 
 ## v0.0.146 (2026-02-11)
 
