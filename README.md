@@ -599,7 +599,7 @@ These options can be used with any command:
   - For models with discrete effort levels, `1.0` corresponds to the highest effort level.
   - Values between 0.0 and 1.0 scale the allocation proportionally.
 - `--temperature FLOAT`: Set the temperature of the AI model (default is 0.0).
-- `--verbose`: Increase output verbosity for more detailed information.
+- `--verbose`: Increase output verbosity for more detailed information. Includes token count and context window usage for each LLM call.
 - `--quiet`: Decrease output verbosity for minimal information.
 - `--output-cost PATH_TO_CSV_FILE`: Enable cost tracking and output a CSV file with usage details.
 - `--review-examples`: Review and optionally exclude few-shot examples before command execution.
@@ -2822,6 +2822,7 @@ PDD provides informative error messages when issues occur during command executi
 - Invalid input files or formats
 - Insufficient permissions to read/write files
 - AI model-related errors (e.g., API failures)
+- Prompt exceeding model context window — PDD validates prompt token count before sending to the LLM. If the prompt exceeds the model's context limit, PDD reports the token count, the model's limit, usage percentage, and which prompt caused the overflow. When multiple candidate models are configured, PDD automatically falls back to the next model.
 - Syntax errors in generated code
 
 When an error occurs, PDD will display a message describing the issue and, when possible, suggest steps to resolve it.
@@ -2877,6 +2878,13 @@ Here are some common issues and their solutions:
    - **State corruption or unexpected behavior**: Delete `.pdd/meta/{basename}_{language}.json` to reset fingerprint state
    - **Animation display issues**: Sync operations work in background; animation is visual feedback only and doesn't affect functionality
    - **Fingerprint mismatches**: Use `pdd sync --dry-run basename` to see what changes were detected and why operations were recommended
+
+9. **Context Window Exceeded**:
+   - PDD reports the token count, model limit, and usage percentage — use this info to reduce prompt size
+   - Split large prompts into smaller modules (one prompt per file)
+   - Use `<include>` with targeted excerpts instead of full files
+   - Use `pdd --verbose` to see token counts for all LLM calls, helping identify oversized prompts
+   - If using `auto-deps`, review included dependencies for unnecessary bulk
 
 If you encounter persistent issues, consult the PDD documentation or post an issue on GitHub for assistance.
 
