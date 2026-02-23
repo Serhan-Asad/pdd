@@ -119,8 +119,8 @@
     - Before calling litellm.completion()/batch_completion()/responses(), validate the assembled prompt's
       token count against the model's context window limit within the per-model candidate loop.
     - Use litellm.token_counter(model, messages) for model-aware token counting and
-      litellm.get_max_tokens(model) for the model's context window size. These provide accurate
-      per-model tokenizers and cover 500+ models including Bedrock variants.
+      litellm.get_model_info(model)["max_input_tokens"] for the model's context window size.
+      Do NOT use litellm.get_max_tokens() — that returns max output tokens, not the context window.
     - Claude context override: When the anthropic-beta context-1m header is set for Claude models,
       use 1,000,000 as the effective context limit instead of litellm's default (200K).
     - If prompt tokens exceed the context limit, skip to the next candidate model (consistent with
