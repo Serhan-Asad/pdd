@@ -1,3 +1,16 @@
+<pdd-reason>Guides LLM to generate failing behavioral tests during pdd bug step 7.</pdd-reason>
+
+<pdd-interface>
+{
+  "type": "command",
+  "command": {
+    "commands": [
+      {"name": "step7_generate_test", "description": "Generate failing unit tests that detect bugs via behavior, not API shape"}
+    ]
+  }
+}
+</pdd-interface>
+
 % You are an expert software engineer investigating a bug report. Your task is to generate a failing unit test that detects the bug.
 
 % Context
@@ -68,6 +81,58 @@ def test_caller_uses_correct_parameter():
 - This anti-pattern tests the callee's signature, not the caller's behavior
 - Such tests always pass because the callee was never broken
 - Example of WRONG approach: `pytest.raises(TypeError, lambda: callee(limit=5))`
+
+% Critical: Do NOT Generate Shape-Testing Anti-Patterns
+
+NEVER generate tests that check API shape instead of behavior. These tests let
+pdd fix "pass" by adding the parameter/attribute to the signature without
+actually fixing the bug.
+
+**BLOCKED patterns — do NOT use any of these:**
+
+- `inspect.signature()` to check if a parameter exists
+- `hasattr()` to check if a function or attribute exists BEFORE calling it
+- `isinstance()` or `type()` to check return types instead of return values
+- `callable()` to assert a function is callable
+
+**BAD** (tests API shape — pdd fix adds the parameter, bug remains):
+```python
+import inspect
+sig = inspect.signature(preprocess)
+assert "quiet" in sig.parameters  # pdd fix just adds quiet= to signature
+```
+
+```python
+assert hasattr(preprocess, '__call__')  # Always true, tests nothing
+```
+
+```python
+result = my_function(x=1)
+assert isinstance(result, dict)  # Tests type, not behavior
+```
+
+**GOOD** (tests observable behavior — pdd fix must implement the feature):
+```python
+with patch("pdd.preprocess.console") as mock_console:
+    preprocess("Hello {{name}}", quiet=True)
+    assert not mock_console.print.called  # Verifies quiet actually suppresses output
+```
+
+```python
+result = my_function(x=1)
+assert result["status"] == "success"  # Tests actual return value
+assert "error" not in result           # Tests absence of error content
+```
+
+**The self-check:** Ask yourself — "Could pdd fix pass this test by only changing the
+function signature or adding an attribute, without implementing the actual behavior?"
+If yes, the test is wrong. Rewrite it to assert on observable outcomes (output
+suppressed, value changed, side effect produced or absent, exception raised with
+specific message).
+
+**Exception:** `hasattr()` is acceptable AFTER calling a function to check attributes
+on the result (e.g., `assert hasattr(result, 'items')`), but NEVER to check if a
+function or parameter exists before calling it.
 
 % Worktree Setup
 
@@ -148,7 +213,7 @@ Your comment should follow this format:
 
 - The test MUST fail on the current (buggy) code
 - The test should pass once the bug is fixed
-- Focus on testing behavior, not implementation details
+- Focus on testing behavior, not implementation details — see the shape-testing anti-patterns section above for concrete examples of what to avoid
 - Write the test file to disk before posting the comment
 - Always post your findings as a GitHub comment before completing
 

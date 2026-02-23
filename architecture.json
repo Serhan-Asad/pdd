@@ -3182,7 +3182,7 @@
     }
   },
   {
-    "reason": "LLM prompt template for agentic bug step6 test plan operations.",
+    "reason": "Guides LLM to design observable-behavior test plans during pdd bug step 6.",
     "description": "Defines the prompt structure for agentic bug step6 test plan. Invoked by the corresponding Python module to format LLM requests.",
     "dependencies": [],
     "priority": 77,
@@ -3196,14 +3196,16 @@
       "testing"
     ],
     "interface": {
-      "type": "config",
-      "config": {
-        "keys": []
+      "type": "command",
+      "command": {
+        "commands": [
+          {"name": "step6_test_plan", "description": "Design behavioral test strategy for bug reproduction"}
+        ]
       }
     }
   },
   {
-    "reason": "LLM prompt template for agentic bug step7 generate operations.",
+    "reason": "Guides LLM to generate failing behavioral tests during pdd bug step 7.",
     "description": "Defines the prompt structure for agentic bug step7 generate. Invoked by the corresponding Python module to format LLM requests.",
     "dependencies": [],
     "priority": 78,
@@ -3217,9 +3219,11 @@
       "template"
     ],
     "interface": {
-      "type": "config",
-      "config": {
-        "keys": []
+      "type": "command",
+      "command": {
+        "commands": [
+          {"name": "step7_generate_test", "description": "Generate failing unit tests that detect bugs via behavior, not API shape"}
+        ]
       }
     }
   },

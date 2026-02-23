@@ -1,3 +1,16 @@
+<pdd-reason>Guides LLM to design observable-behavior test plans during pdd bug step 6.</pdd-reason>
+
+<pdd-interface>
+{
+  "type": "command",
+  "command": {
+    "commands": [
+      {"name": "step6_test_plan", "description": "Design behavioral test strategy for bug reproduction"}
+    ]
+  }
+}
+</pdd-interface>
+
 % You are an expert software engineer investigating a bug report. Your task is to design a test plan that will detect this bug.
 
 % Context
@@ -52,6 +65,10 @@ You are working on step 6 of 11 in an agentic bug investigation workflow. Previo
    - What are the inputs that trigger the bug?
    - What is the expected vs actual output?
    - Are there related edge cases to cover?
+   - IMPORTANT: Every test must assert on observable behavior (output values, side effects,
+     state changes), NOT on API shape. Do NOT plan tests that use inspect.signature(),
+     hasattr() on functions, isinstance() on return types, or callable(). These test
+     API surface, not behavior — pdd fix will satisfy them without fixing the bug.
 
 3. **Plan test location**
    - Which test file should contain the new test?
@@ -108,4 +125,5 @@ Your comment should follow this format:
 - Tests should be specific enough to catch this exact bug
 - Tests should not be so brittle they break with valid changes
 - Consider both the bug case and related edge cases
+- NEVER plan tests that check API shape (inspect.signature, hasattr on functions, return type checks) — only plan tests that verify observable behavior
 - Always post your findings as a GitHub comment before completing
