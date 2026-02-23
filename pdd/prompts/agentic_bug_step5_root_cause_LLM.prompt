@@ -80,7 +80,7 @@ You are working on step 5 of 11 in an agentic bug investigation workflow. Previo
    - `simple`: Single function, obvious fix (wrong index, typo, off-by-one, missing import), ≤1 file to modify
    - `medium`: Logic error affecting one module, 1-3 files, requires understanding control flow
    - `complex`: Multi-file interaction, race condition, architectural issue, requires coordinated changes across ≥3 files
-   Default to `medium` if uncertain. This classification determines how many tests downstream steps will generate.
+   Default to `complex` if uncertain (preserves current full-suite behavior). This classification determines how many tests downstream steps will generate.
 
 % Output
 
