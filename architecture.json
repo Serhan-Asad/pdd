@@ -1657,8 +1657,8 @@
     }
   },
   {
-    "reason": "Orchestrates the 9-step agentic bug investigation workflow.",
-    "description": "Coordinates duplicate checking, documentation review, triage, reproduction, root cause analysis, test planning, test generation, verification, and PR creation.",
+    "reason": "Orchestrates the 11-step agentic bug investigation workflow with complexity-aware test scaling.",
+    "description": "Coordinates duplicate checking, documentation review, triage, reproduction, root cause analysis, prompt classification, test planning, test generation, verification, E2E testing, and PR creation. Parses COMPLEXITY: from Step 5 and E2E_SKIP: from Step 9 for complexity-scaled behavior.",
     "dependencies": [
       "agentic_common_python.prompt",
       "load_prompt_template_python.prompt"
@@ -1677,7 +1677,7 @@
         "functions": [
           {
             "name": "run_agentic_bug_orchestrator",
-            "signature": "(issue_url: str, issue_content: str, repo_owner: str, repo_name: str, issue_number: int, issue_author: str, issue_title: str) -> Tuple[bool, str, float, str, List[str]]",
+            "signature": "(issue_url: str, issue_content: str, repo_owner: str, repo_name: str, issue_number: int, issue_author: str, issue_title: str, *, cwd: Path, verbose: bool, quiet: bool, timeout_adder: float, use_github_state: bool) -> Tuple[bool, str, float, str, List[str]]",
             "returns": "Tuple[bool, str, float, str, List[str]]",
             "sideEffects": [
               "None"
@@ -3162,8 +3162,8 @@
     }
   },
   {
-    "reason": "LLM prompt template for agentic bug step5 root cause operations.",
-    "description": "Defines the prompt structure for agentic bug step5 root cause. Invoked by the corresponding Python module to format LLM requests.",
+    "reason": "Analyzes bug root cause and classifies complexity as simple/medium/complex for downstream test scaling.",
+    "description": "Step 5 of the agentic bug workflow. Analyzes root cause and outputs a COMPLEXITY: marker (simple/medium/complex) that determines test volume in downstream steps.",
     "dependencies": [],
     "priority": 76,
     "filename": "agentic_bug_step5_root_cause_LLM.prompt",
@@ -3182,8 +3182,8 @@
     }
   },
   {
-    "reason": "LLM prompt template for agentic bug step6 test plan operations.",
-    "description": "Defines the prompt structure for agentic bug step6 test plan. Invoked by the corresponding Python module to format LLM requests.",
+    "reason": "Designs complexity-scaled test plans with depth proportional to bug severity classification.",
+    "description": "Step 6 of the agentic bug workflow. Consumes {complexity} input from Step 5 and scales test categories: simple=1 test, medium=2-4 tests, complex=full suite.",
     "dependencies": [],
     "priority": 77,
     "filename": "agentic_bug_step6_test_plan_LLM.prompt",
@@ -5750,8 +5750,8 @@
     }
   },
   {
-    "reason": "LLM prompt template for generating E2E tests that verify a bug at system integration level.",
-    "description": "Step 9 of the agentic bug workflow. Generates and runs end-to-end tests that verify a bug at the system integration level.",
+    "reason": "Generates complexity-aware E2E tests, skipping for simple bugs and scaling depth for medium/complex.",
+    "description": "Step 9 of the agentic bug workflow. Consumes {complexity} input: simple bugs output E2E_SKIP, medium bugs get lightweight E2E, complex bugs get full E2E suite.",
     "dependencies": [],
     "priority": 167,
     "filename": "agentic_bug_step9_e2e_test_LLM.prompt",

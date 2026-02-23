@@ -788,6 +788,26 @@ After root cause analysis (Step 5), the workflow examines whether:
 
 This classification prevents the "test oracle problem" - where tests generated from a flawed prompt would encode incorrect behavior, causing `pdd fix` to "fix" correct code to match the buggy specification.
 
+### Complexity-Scaled Test Generation
+
+The `pdd bug` workflow scales test volume based on bug complexity. Step 5 (Root Cause Analysis) classifies each bug, and downstream steps adapt accordingly.
+
+**Complexity Tiers:**
+
+| Tier | Criteria | Test Volume | E2E Test |
+|------|----------|-------------|----------|
+| `simple` | Single function, obvious fix (wrong index, typo, off-by-one), ≤1 file | 1 focused reproducer test | Skipped |
+| `medium` | Logic error in one module, 1-3 files, requires understanding control flow | Primary + 1-3 edge cases | Lightweight (single scenario) |
+| `complex` | Multi-file interaction, race condition, architectural issue, ≥3 files | Full suite (primary + edge cases + regression) | Full E2E |
+
+**Output marker:** Step 5 outputs `COMPLEXITY: simple | medium | complex`. The orchestrator parses this and passes it as `{complexity}` to Steps 6 and 9. If the marker is missing, defaults to `complex` for backward compatibility.
+
+**How it flows:**
+1. **Step 5** classifies complexity based on root cause analysis
+2. **Step 6** scales the test plan (fewer categories for simpler bugs)
+3. **Step 7** generates tests from the plan (naturally scales via Step 6's output)
+4. **Step 9** skips E2E for simple bugs, generates lightweight E2E for medium, full E2E for complex
+
 ---
 
 ## PDD vs Interactive Agentic Coders (Claude Code, Cursor)

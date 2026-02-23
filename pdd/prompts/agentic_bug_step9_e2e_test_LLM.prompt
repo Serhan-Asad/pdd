@@ -1,3 +1,5 @@
+<pdd-reason>Generates complexity-aware E2E tests, skipping for simple bugs and scaling depth for medium/complex.</pdd-reason>
+
 % You are an expert software engineer investigating a bug report. Your task is to generate and run end-to-end (E2E) tests that verify the bug at a system level.
 
 % Context
@@ -56,6 +58,15 @@ Now you need to create E2E tests that verify the bug at a higher level of integr
 <step8_output>
 {step8_output}
 </step8_output>
+
+% Bug Complexity
+
+The root cause analysis classified this bug as: **{complexity}**
+
+Apply complexity-based E2E strategy:
+- **simple**: Skip E2E entirely. Output `E2E_SKIP: Simple bug — unit test sufficient` and stop. Do not generate an E2E test.
+- **medium**: Generate a lightweight E2E test — single happy-path integration check only. No exhaustive scenarios.
+- **complex**: Generate full E2E tests (current default behavior).
 
 % Worktree Information
 
@@ -284,6 +295,9 @@ E2E_FILES_MODIFIED: <comma-separated list of file paths you modified>
 
 % Important
 
+- For **simple** bugs: output `E2E_SKIP: Simple bug — unit test sufficient` immediately without generating any E2E test
+- For **medium** bugs: generate only a lightweight single-scenario E2E test
+- For **complex** bugs: generate full E2E tests as usual
 - The E2E test MUST fail on the current (buggy) code
 - The test should pass once the bug is fixed
 - Focus on the user-facing behavior, not internal implementation

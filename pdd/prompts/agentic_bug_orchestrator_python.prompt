@@ -1,3 +1,19 @@
+<pdd-reason>Orchestrates the 11-step agentic bug investigation workflow with complexity-aware test scaling.</pdd-reason>
+
+<pdd-interface>
+{{
+  "type": "module",
+  "module": {{
+    "functions": [
+      {{"name": "run_agentic_bug_orchestrator", "signature": "(issue_url, issue_content, repo_owner, repo_name, issue_number, issue_author, issue_title, *, cwd, verbose, quiet, timeout_adder, use_github_state)", "returns": "Tuple[bool, str, float, str, List[str]]"}}
+    ]
+  }}
+}}
+</pdd-interface>
+
+<pdd-dependency>agentic_common_python.prompt</pdd-dependency>
+<pdd-dependency>load_prompt_template_python.prompt</pdd-dependency>
+
 <include>context/python_preamble.prompt</include>
 
 % Goal
@@ -66,11 +82,17 @@ For each step (1-5, 5.5, 6-10):
 - Step 4 receives: issue_content, step1_output through step3_output
 - Step 5 receives: issue_content, step1_output through step4_output
 - Step 5.5 receives: issue_content, step1_output through step5_output
-- Step 6 receives: issue_content, step1_output through step5_5_output
+- Step 6 receives: issue_content, step1_output through step5_5_output, **complexity**
 - ... and so on
 - Step 8 receives: issue_content, step1_output through step7_output
-- Step 9 receives: issue_content, step1_output through step8_output, worktree_path, files_to_stage
+- Step 9 receives: issue_content, step1_output through step8_output, worktree_path, files_to_stage, **complexity**
 - Step 10 receives: issue_content, step1_output through step9_output, worktree_path, files_to_stage
+
+% Complexity Parsing (after Step 5)
+After Step 5 completes, parse the output for a `COMPLEXITY:` marker:
+- Scan output lines for a line containing `COMPLEXITY:` followed by `simple`, `medium`, or `complex`
+- Store the extracted value in `context["complexity"]`
+- If the marker is missing or the value is not one of the three valid options, default to `"complex"` (preserves current behavior for backward compatibility)
 
 % Files to Stage
 After Step 7 parses FILES_CREATED/FILES_MODIFIED, pass the extracted file list to Steps 9 and 10:
@@ -92,6 +114,7 @@ The orchestrator must parse step output to detect stop conditions:
 | 7 | No test file generated | No FILES_CREATED or FILES_MODIFIED line in output, or empty file list |
 | 8 | Test doesn't fail correctly | Output contains "FAIL: Test does not work as expected" |
 | 9 | E2E test doesn't catch bug | Output contains "E2E_FAIL: Test does not catch bug correctly" |
+| 9 | E2E test skipped (non-failure) | Output contains "E2E_SKIP:" — treat as successful completion, not a hard stop |
 
 % Step 5.5 Special Handling
 After Step 5.5, parse output for:
@@ -109,6 +132,13 @@ After Step 5.5, parse output for:
 - If `run_agentic_task()` returns `(False, ...)` but does NOT match a hard stop condition: log warning and continue
 - This applies to all steps - only the specific hard stop patterns above terminate the workflow
 - Steps should post their findings to GitHub even on partial failure
+
+% Step 9 E2E_SKIP Handling
+After Step 9, parse the output for `E2E_SKIP:`:
+- If output contains `E2E_SKIP:`, treat it as a **successful non-failure exit** (not a hard stop)
+- Do NOT parse for E2E_FILES_CREATED when E2E_SKIP is present (no E2E test was generated)
+- Continue to Step 10 normally — the unit test from Step 7 is sufficient
+- Log the skip reason: `"E2E test skipped: {reason}"`
 
 % Git Worktree Isolation
 

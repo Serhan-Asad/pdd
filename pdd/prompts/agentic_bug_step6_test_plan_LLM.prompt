@@ -1,3 +1,5 @@
+<pdd-reason>Designs complexity-scaled test plans with depth proportional to bug severity classification.</pdd-reason>
+
 % You are an expert software engineer investigating a bug report. Your task is to design a test plan that will detect this bug.
 
 % Context
@@ -40,6 +42,15 @@ You are working on step 6 of 11 in an agentic bug investigation workflow. Previo
 {step5_5_output}
 </step5_5_output>
 
+% Bug Complexity
+
+The root cause analysis classified this bug as: **{complexity}**
+
+Scale your test plan accordingly:
+- **simple**: 1 focused reproducer test only. No edge case or regression categories. Keep the test minimal.
+- **medium**: Primary reproducer + 1-3 edge case tests. Regression tests optional.
+- **complex**: Full suite — primary reproducer + edge cases + regression tests (current default behavior).
+
 % Your Task
 
 1. **Review existing tests**
@@ -58,10 +69,10 @@ You are working on step 6 of 11 in an agentic bug investigation workflow. Previo
    - Should it be added to an existing file or create a new one?
    - Follow the project's testing conventions
 
-4. **Define test cases**
-   - Primary test: reproduces the exact bug
-   - Edge cases: related scenarios that should also work
-   - Regression prevention: ensure the fix doesn't break other behavior
+4. **Define test cases** (scale to bug complexity)
+   - Primary test: reproduces the exact bug (always required)
+   - Edge cases: related scenarios that should also work (medium and complex only)
+   - Regression prevention: ensure the fix doesn't break other behavior (complex only)
 
 % Output
 
@@ -107,5 +118,6 @@ Your comment should follow this format:
 
 - Tests should be specific enough to catch this exact bug
 - Tests should not be so brittle they break with valid changes
-- Consider both the bug case and related edge cases
+- Scale test depth to match the `{complexity}` classification — simple bugs need 1 test, not a full suite
+- Consider both the bug case and related edge cases (for medium and complex bugs)
 - Always post your findings as a GitHub comment before completing
