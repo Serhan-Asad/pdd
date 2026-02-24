@@ -3,13 +3,14 @@
 <include>./context/python_preamble.prompt</include>
 
 % Function Signature
-    def preprocess(prompt: str, recursive: bool = False, double_curly_brackets: bool = True, exclude_keys: Optional[List[str]] = None) -> str
+    def preprocess(prompt: str, recursive: bool = False, double_curly_brackets: bool = True, exclude_keys: Optional[List[str]] = None, quiet: bool = False) -> str
 
 % Inputs/Outputs
     - prompt: The prompt string to preprocess
     - recursive: When True, resolve includes but defer `<shell>` and `<web>` execution
     - double_curly_brackets: When True, escape single curly braces as double braces
     - exclude_keys: Variable names to exclude from brace doubling
+    - quiet: When True, suppress all non-error console output (Rich panels, progress messages, "Doubling curly brackets..." messages). Only errors should be printed.
     - Returns: The preprocessed prompt (preserve leading/trailing whitespace)
 
 % Dependencies

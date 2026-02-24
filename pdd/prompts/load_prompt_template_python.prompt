@@ -4,6 +4,7 @@
 
 % Inputs/Outputs
     Input: 'prompt_name' (str) - The logical name of the prompt (without '.prompt' extension)
+    Input: 'quiet' (bool, default False) - When True, suppress non-error output (e.g., "Successfully loaded prompt: ..." messages). Only errors should be printed.
     Returns: Optional[str] - The prompt template text, or None on error/missing file
 
 % Dependencies
@@ -17,5 +18,5 @@
        - The resolver must check roots in order: $PDD_PATH, repo root, CWD
        - For each root, it checks BOTH '<root>/prompts/{name}.prompt' and '<root>/pdd/prompts/{name}.prompt'
        - If path is None, rebuild the tried-path list from resolver.pdd_path_env, resolver.repo_root, and resolver.cwd in the same order
-    3. Return the contents of the first existing file. Print success message with prompt name.
+    3. Return the contents of the first existing file. Print success message with prompt name if not in quiet mode.
     4. If no file found, print error listing all tried paths. On I/O errors, print error and return None.

@@ -2079,3 +2079,100 @@ You are an expert Python engineer. Write the User data model.'''
     assert '{"name": "User"' in formatted
     assert '<pdd-interface>' in formatted
     assert '</pdd-interface>' in formatted
+
+
+# --------- Quiet mode tests (Issue #168) ---------
+# These tests verify that preprocess() and double_curly() accept and respect
+# a `quiet` parameter to suppress non-error console output.
+# Before the fix: tests 1, 3, 6 FAIL with TypeError (no quiet parameter).
+# After the fix: all tests pass.
+
+from rich.console import Console as _RichConsole
+from pdd.preprocess import double_curly
+
+
+def test_preprocess_quiet_suppresses_rich_panels():
+    """preprocess(quiet=True) must suppress Rich panels and progress messages.
+
+    Issue #168: The --quiet flag does not suppress output because preprocess()
+    has no quiet parameter. This test calls preprocess(quiet=True) which will
+    raise TypeError on the current buggy code (proving the bug exists).
+    After the fix, the call succeeds and no Rich panel output is produced.
+    """
+    set_pdd_path('/mock/path')
+    prompt = "Simple test prompt with {variable}"
+
+    output = io.StringIO()
+    test_console = _RichConsole(file=output, no_color=True)
+    with patch('pdd.preprocess.console', test_console):
+        # BUG: preprocess() has no quiet parameter — raises TypeError
+        result = preprocess(prompt, quiet=True, double_curly_brackets=True)
+
+    output_text = output.getvalue()
+    # Informational Rich panels and progress messages must be suppressed
+    assert "Starting prompt preprocessing" not in output_text
+    assert "Preprocessing complete" not in output_text
+    assert "Doubling curly brackets" not in output_text
+    # Function must still return a valid preprocessed result
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_preprocess_quiet_false_still_prints():
+    """preprocess() with default (non-quiet) settings should still print Rich panels.
+
+    Regression guard: ensures the fix doesn't accidentally suppress all output.
+    This test passes on current code because output is always printed.
+    """
+    set_pdd_path('/mock/path')
+    prompt = "Simple test prompt"
+
+    output = io.StringIO()
+    test_console = _RichConsole(file=output, no_color=True)
+    with patch('pdd.preprocess.console', test_console):
+        preprocess(prompt, double_curly_brackets=False)
+
+    output_text = output.getvalue()
+    # Non-quiet mode should produce the standard Rich panel output
+    assert "Starting prompt preprocessing" in output_text
+    assert "Preprocessing complete" in output_text
+
+
+def test_preprocess_quiet_preserves_error_output():
+    """preprocess(quiet=True) should still print error messages for empty prompts.
+
+    Issue #168: Even in quiet mode, errors must be visible to the user.
+    Before the fix: TypeError (no quiet parameter).
+    After the fix: error message prints, function returns empty string.
+    """
+    output = io.StringIO()
+    test_console = _RichConsole(file=output, no_color=True)
+    with patch('pdd.preprocess.console', test_console):
+        # BUG: preprocess() has no quiet parameter — raises TypeError
+        result = preprocess("", quiet=True)
+
+    output_text = output.getvalue()
+    # Error output must still appear even in quiet mode
+    assert "Error" in output_text
+    assert "Empty prompt provided" in output_text
+    assert result == ""
+
+
+def test_double_curly_quiet_suppresses_progress_message():
+    """double_curly(quiet=True) must suppress 'Doubling curly brackets...' message.
+
+    Issue #168: double_curly() unconditionally prints a progress message.
+    Before the fix: TypeError (no quiet parameter).
+    After the fix: message is suppressed but curly brackets are still doubled.
+    """
+    output = io.StringIO()
+    test_console = _RichConsole(file=output, no_color=True)
+    with patch('pdd.preprocess.console', test_console):
+        # BUG: double_curly() has no quiet parameter — raises TypeError
+        result = double_curly("{hello}", quiet=True)
+
+    output_text = output.getvalue()
+    # Progress message must be suppressed in quiet mode
+    assert "Doubling curly brackets" not in output_text
+    # Curly brackets must still be doubled correctly
+    assert "{{hello}}" in result

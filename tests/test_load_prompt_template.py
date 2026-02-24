@@ -210,3 +210,56 @@ def test_load_prompt_template_installed_package_location(monkeypatch, capsys, tm
     
     # Once fixed, this assertion should pass
     assert result == expected_content, f"Expected to load prompt from installed package location"
+
+
+# --------- Quiet mode tests (Issue #168) ---------
+# These tests verify that load_prompt_template() accepts and respects
+# a `quiet` parameter to suppress non-error console output.
+# Before the fix: tests FAIL with TypeError (no quiet parameter).
+# After the fix: all tests pass.
+
+
+def test_load_prompt_template_quiet_suppresses_success_message(monkeypatch, capsys):
+    """load_prompt_template(quiet=True) must suppress 'Successfully loaded prompt' message.
+
+    Issue #168: load_prompt_template() has no quiet parameter and unconditionally
+    prints the success message. This test calls load_prompt_template(quiet=True)
+    which raises TypeError on the current buggy code (proving the bug exists).
+    After the fix, the success message is suppressed but the prompt is still returned.
+    """
+    prompt_name = "test_prompt"
+    expected_content = "This is a test prompt template."
+
+    monkeypatch.setenv("PDD_PATH", "/fake/project/path")
+
+    with patch.object(Path, 'exists', return_value=True):
+        with patch("builtins.open", mock_open(read_data=expected_content)):
+            # BUG: load_prompt_template() has no quiet parameter — raises TypeError
+            result = load_prompt_template(prompt_name, quiet=True)
+
+    captured = capsys.readouterr()
+    # Success message must be suppressed in quiet mode
+    assert "Successfully loaded prompt" not in captured.out
+    # Function must still return the prompt content
+    assert result == expected_content
+
+
+def test_load_prompt_template_quiet_preserves_error_messages(monkeypatch, capsys):
+    """load_prompt_template(quiet=True) should still show error messages for missing files.
+
+    Issue #168: Even in quiet mode, error messages must be visible to the user.
+    Before the fix: TypeError (no quiet parameter).
+    After the fix: error message prints, function returns None.
+    """
+    prompt_name = "nonexistent_prompt"
+
+    monkeypatch.setenv("PDD_PATH", "/fake/project/path")
+
+    with patch.object(Path, 'exists', return_value=False):
+        # BUG: load_prompt_template() has no quiet parameter — raises TypeError
+        result = load_prompt_template(prompt_name, quiet=True)
+
+    captured = capsys.readouterr()
+    # Error output must still appear even in quiet mode
+    assert "Prompt file not found" in captured.out
+    assert result is None
