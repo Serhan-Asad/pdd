@@ -686,6 +686,22 @@ def test_process_commands_fatal_exception(mock_write_dump, mock_print):
         process_commands(results=[({}, 0.1, "gpt-4")])
     ctx.exit.assert_called_with(1)
 
+def test_cli_help_strength_default_matches_constant(runner):
+    """Test that --strength help text shows the correct default matching DEFAULT_STRENGTH.
+
+    Bug: The help text says 'Default: 0.75' but DEFAULT_STRENGTH is 1.0.
+    This test ensures the help text accurately reflects the actual default value.
+    See: https://github.com/Serhan-Asad/pdd/issues/164
+    """
+    result = runner.invoke(cli_command, ["--help"])
+    assert result.exit_code == 0
+    # The help text must show the actual DEFAULT_STRENGTH value, not a stale hardcoded one
+    assert f"Default: {DEFAULT_STRENGTH}" in result.output, (
+        f"--strength help text does not show the actual DEFAULT_STRENGTH ({DEFAULT_STRENGTH}). "
+        f"Help output:\n{result.output}"
+    )
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__]))
