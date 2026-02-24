@@ -2012,746 +2012,41 @@ def test_failure_handling_does_not_use_step_num_minus_one(mock_dependencies, def
         f"The step_num - 1 formula incorrectly assumed step 1 succeeded."
     )
 
-
-import sys
-from pathlib import Path
-
-# Add project root to sys.path to ensure local code is prioritized
-# This allows testing local changes without installing the package
-project_root = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(project_root))
-
-import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
-from pdd.agentic_bug_orchestrator import run_agentic_bug_orchestrator
-
-# --- Fixtures ---
-
-@pytest.fixture
-def mock_dependencies(tmp_path):
-    """Mocks external dependencies for the orchestrator."""
-    with patch("pdd.agentic_bug_orchestrator.run_agentic_task") as mock_run, \
-         patch("pdd.agentic_bug_orchestrator.load_prompt_template") as mock_load, \
-         patch("pdd.agentic_bug_orchestrator.console") as mock_console, \
-         patch("pdd.agentic_bug_orchestrator._setup_worktree") as mock_worktree:
-
-        # Default behavior: successful run, generic output
-        mock_run.return_value = (True, "Step output", 0.1, "gpt-4")
-        mock_load.return_value = "Prompt for {issue_number}"
-        mock_worktree.return_value = (tmp_path, None)
-
-        yield mock_run, mock_load, mock_console
-
-
-@pytest.fixture
-def default_args(tmp_path):
-    """Provides default arguments for the orchestrator function."""
-    return {
-        "issue_url": "http://github.com/owner/repo/issues/1",
-        "issue_content": "Bug description",
-        "repo_owner": "owner",
-        "repo_name": "repo",
-        "issue_number": 1,
-        "issue_author": "user",
-        "issue_title": "Bug Title",
-        "cwd": tmp_path,
-        "verbose": False,
-        "quiet": True
-    }
-
-
-# --- Tests ---
-
-def test_happy_path_execution(mock_dependencies, default_args):
-    """Test that all 11 steps execute successfully when no stop conditions are met."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    # Setup mock to return FILES_CREATED in step 7 output to avoid hard stop
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "Investigation complete" in msg
-    assert mock_run.call_count == 11  # 11 steps including step 5.5
-    assert cost == pytest.approx(1.1)  # 11 steps × 0.1 each
-    assert files == ["test_file.py"]
-    assert model == "gpt-4"
-
-
-def test_hard_stop_step_1_duplicate(mock_dependencies, default_args):
-    """Test early exit at Step 1 if issue is a duplicate."""
-    mock_run, _, _ = mock_dependencies
-
-    # Mock step 1 output to trigger hard stop
-    mock_run.return_value = (True, "This looks like a Duplicate of #42", 0.05, "claude")
-
-    success, msg, cost, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 1" in msg
-    assert "duplicate" in msg.lower()
-    assert mock_run.call_count == 1
-    assert cost == 0.05
-
-
-def test_hard_stop_step_2_not_a_bug(mock_dependencies, default_args):
-    """Test early exit at Step 2 if issue is a feature request or user error."""
-    mock_run, _, _ = mock_dependencies
-
-    # Step 1 passes, Step 2 fails
-    mock_run.side_effect = [
-        (True, "Step 1 ok", 0.1, "model"),
-        (True, "Analysis: Feature Request (Not a Bug)", 0.1, "model")
-    ]
-
-    success, msg, cost, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 2" in msg
-    assert "Feature Request" in msg
-    assert mock_run.call_count == 2
-
-
-def test_hard_stop_step_3_needs_info(mock_dependencies, default_args):
-    """Test early exit at Step 3 if more info is needed."""
-    mock_run, _, _ = mock_dependencies
-
-    # Steps 1-2 pass, Step 3 fails
-    mock_run.side_effect = [
-        (True, "Step 1 ok", 0.1, "model"),
-        (True, "Step 2 ok", 0.1, "model"),
-        (True, "Cannot proceed. Needs More Info from user.", 0.1, "model")
-    ]
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 3" in msg
-    assert "information" in msg.lower() or "info" in msg.lower()
-    assert mock_run.call_count == 3
-
-
-def test_hard_stop_step_5_5_prompt_review(mock_dependencies, default_args):
-    """Test early exit at Step 5.5 if prompt needs human review."""
-    mock_run, _, _ = mock_dependencies
-
-    # Steps 1-5 pass, Step 5.5 triggers hard stop
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step5_5':
-            return (True, "PROMPT_REVIEW: Ambiguous whether to fix code or prompt", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 5.5" in msg
-    assert "Ambiguous" in msg or "prompt" in msg.lower()
-    assert mock_run.call_count == 6
-
-
-def test_step_5_5_prompt_fixed_tracking(mock_dependencies, default_args):
-    """Test that PROMPT_FIXED: output from step 5.5 is tracked in changed_files."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step5_5':
-            return (True, "DEFECT_TYPE: prompt\nPROMPT_FIXED: prompts/my_module_python.prompt", 0.1, "model")
-        if label == 'step7':
-            return (True, "FILES_CREATED: tests/test_fix.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "prompts/my_module_python.prompt" in changed_files
-    assert "tests/test_fix.py" in changed_files
-
-
-def test_hard_stop_step_7_no_file_generated(mock_dependencies, default_args):
-    """Test early exit at Step 7 if no test file is generated."""
-    mock_run, _, _ = mock_dependencies
-
-    # Steps 1-6 (including 5.5) pass generic
-    # Step 7 returns no FILES_CREATED line
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "I could not generate a test.", 0.1, "model")  # No FILES_CREATED line
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 7" in msg
-    assert "No test file" in msg or "no test" in msg.lower()
-    assert mock_run.call_count == 8
-
-
-def test_hard_stop_step_8_verification_failed(mock_dependencies, default_args):
-    """Test early exit at Step 8 if test verification fails."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        if label == 'step8':
-            return (True, "FAIL: Test does not work as expected", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 8" in msg
-    assert "verification" in msg.lower() or "fail" in msg.lower()
-    assert mock_run.call_count == 9
-
-
-def test_soft_failure_continuation(mock_dependencies, default_args):
-    """Test that the workflow continues if a step returns success=False but does NOT trigger a hard stop condition string."""
-    mock_run, _, _ = mock_dependencies
-
-    # Step 1 fails (agent error) but no hard stop text
-    # Step 7 needs to return a file to avoid hard stop there
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step1':
-            return (False, "Agent had a hiccup but produced output", 0.1, "model")
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "Investigation complete" in msg
-    assert mock_run.call_count == 11  # 11 steps including 5.5
-
-
-def test_template_loading_failure(mock_dependencies, default_args):
-    """Test graceful exit if a prompt template cannot be loaded."""
-    mock_run, mock_load, _ = mock_dependencies
-    
-    # Mock template loader to return None for step 1
-    mock_load.return_value = None
-    
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-    
-    assert success is False
-    assert "prompt template" in msg.lower() or "Missing" in msg
-    assert mock_run.call_count == 0
-
-
-def test_template_formatting_unknown_keys_are_passed_through(mock_dependencies, default_args):
-    """Test that templates with unknown keys (after preprocessing) are passed through as literal text."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    # Return a template that has an unknown key
-    mock_load.return_value = "This template needs {non_existent_key}"
-
-    # Setup mock to return FILES_CREATED in step 7 to avoid hard stop
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-    mock_run.side_effect = side_effect_run
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    # With preprocess, unknown keys don't cause KeyError - they become literal text
-    # The orchestrator should continue execution
-    assert mock_run.call_count > 0, "Orchestrator should execute steps (unknown keys are passed through)"
-
-
-def test_context_accumulation(mock_dependencies, default_args):
-    """Verify that output from previous steps is passed to subsequent steps via template formatting."""
-    mock_run, mock_load, _ = mock_dependencies
-    
-    # We want to verify that step 2 receives step 1's output
-    # We need to ensure step 1 template doesn't fail formatting
-    def side_effect_load(name):
-        if "step1" in name:
-            return "Step 1 prompt"
-        if "step2" in name:
-            return "Context: {step1_output}"
-        return "Generic prompt"
-    
-    mock_load.side_effect = side_effect_load
-    
-    # Step 1 output
-    step1_out = "Output from step 1"
-    
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step1':
-            return (True, step1_out, 0.1, "model")
-        if label == 'step7':
-            return (True, "gen\nFILES_CREATED: f.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-        
-    mock_run.side_effect = side_effect_run
-    
-    run_agentic_bug_orchestrator(**default_args)
-    
-    # Check the call args for step 2
-    step2_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step2':
-            step2_call = call_obj
-            break
-            
-    assert step2_call is not None
-    instruction_arg = step2_call.kwargs['instruction']
-    # The instruction should have been formatted with step1_output
-    assert f"Context: {step1_out}" == instruction_arg
-
-
-def test_file_accumulation(mock_dependencies, default_args):
-    """Verify that changed files from multiple steps are accumulated and deduplicated."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Only Step 7 reports files via FILES_CREATED
-            return (True, "gen\nFILES_CREATED: test.py, repro.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    _, _, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should contain both, no duplicates
-    assert len(changed_files) == 2
-    assert "repro.py" in changed_files
-    assert "test.py" in changed_files
-
-
-def test_step7_files_modified_for_append(mock_dependencies, default_args):
-    """Test that FILES_MODIFIED marker is parsed correctly when appending to existing test files."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 appends to existing file, uses FILES_MODIFIED instead of FILES_CREATED
-            return (True, "Appended test to existing file\nFILES_MODIFIED: tests/test_existing_module.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should succeed - FILES_MODIFIED is a valid marker for step 7
-    assert success is True
-    assert "tests/test_existing_module.py" in changed_files
-    assert mock_run.call_count == 11  # 11 steps including 5.5
-
-
-def test_step_timeouts_passed_to_run_agentic_task(mock_dependencies, default_args):
-    """Test that step-specific timeouts from BUG_STEP_TIMEOUTS are passed to run_agentic_task."""
-    from pdd.agentic_bug_orchestrator import BUG_STEP_TIMEOUTS
-
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    # Verify timeout is passed for each step (11 steps including 5.5)
-    assert mock_run.call_count == 11
-
-    for call_obj in mock_run.call_args_list:
-        label = call_obj.kwargs.get('label', '')
-        timeout = call_obj.kwargs.get('timeout')
-
-        # Extract step number from label (e.g., 'step7' -> 7.0, 'step5_5' -> 5.5)
-        step_str = label.replace('step', '').replace('_', '.')
-        step_num = float(step_str)
-        expected_timeout = BUG_STEP_TIMEOUTS.get(step_num, 340.0)
-
-        assert timeout == expected_timeout, (
-            f"Step {step_num}: expected timeout={expected_timeout}, got timeout={timeout}"
-        )
-
-
-def test_files_to_stage_passed_to_step10(mock_dependencies, default_args):
-    """Test that files_to_stage context variable is passed to Step 10 (PR)."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    # Setup templates that use the files_to_stage variable
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Files to stage: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: tests/test_bug_fix.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    # Find the Step 10 call and verify files_to_stage was formatted into the prompt
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None, "Step 10 should have been called"
-    instruction = step10_call.kwargs['instruction']
-    assert instruction == "Files to stage: tests/test_bug_fix.py"
-
-
-def test_files_to_stage_with_multiple_files(mock_dependencies, default_args):
-    """Test that multiple files are correctly joined in files_to_stage."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Stage these: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 creates multiple files
-            return (True, "Generated test\nFILES_CREATED: tests/test_bug.py, tests/conftest.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None
-    instruction = step10_call.kwargs['instruction']
-    # Both files should be in the instruction, comma-separated
-    assert "tests/test_bug.py" in instruction
-    assert "tests/conftest.py" in instruction
-
-
-def test_files_to_stage_with_modified_files(mock_dependencies, default_args):
-    """Test that FILES_MODIFIED files are also included in files_to_stage."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Stage: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 modifies an existing file
-            return (True, "appended\nFILES_MODIFIED: tests/test_existing.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None
-    instruction = step10_call.kwargs['instruction']
-    assert "tests/test_existing.py" in instruction
-
-
-def test_hard_stop_step_9_e2e_fail(mock_dependencies, default_args):
-    """Test early exit at Step 9 if E2E test fails to catch the bug."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        if label == 'step9':
-            return (True, "E2E test ran but...\nE2E_FAIL: Test does not catch bug correctly", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 9" in msg
-    assert "E2E test does not catch bug" in msg
-    assert mock_run.call_count == 10
-
-
-def test_e2e_files_accumulated(mock_dependencies, default_args):
-    """Test that E2E files from Step 9 are added to changed_files."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated unit test\nFILES_CREATED: tests/test_unit.py", 0.1, "gpt-4")
-        if label == 'step9':
-            return (True, "Generated E2E test\nE2E_FILES_CREATED: tests/e2e/test_e2e_bug.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "tests/test_unit.py" in files
-    assert "tests/e2e/test_e2e_bug.py" in files
-
-
-def test_state_save_after_each_step(mock_dependencies, default_args, tmp_path):
-    """Test that state is saved after each step completes."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Run only 2 steps then fail on step 3
-    call_count = [0]
-    def side_effect_run(*args, **kwargs):
-        call_count[0] += 1
-        label = kwargs.get('label', '')
-        if label == 'step3':
-            # Return "Needs More Info" to trigger hard stop
-            return (True, "Needs More Info", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should have stopped at step 3
-    assert success is False
-    assert "Step 3" in msg
-
-    # State file should exist with last_completed_step = 2 (hard stop returns BEFORE saving)
-    state_dir = _get_state_dir(tmp_path)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-    assert state_file.exists(), f"State file not found at {state_file}"
-    with open(state_file) as f:
-        state = json.load(f)
-    assert state is not None
-    assert state["last_completed_step"] == 2  # Hard stop at step 3 returns before saving step 3
-    assert "1" in state["step_outputs"]
-    assert "2" in state["step_outputs"]
-
-
-def test_resume_skips_completed_steps(mock_dependencies, default_args, tmp_path):
-    """Test that resuming from step 5 skips steps 1-4."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create state file with last_completed_step=4 using new naming convention
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "issue_url": default_args["issue_url"],
-        "last_completed_step": 4,
-        "step_outputs": {
-            "1": "Step 1 output",
-            "2": "Step 2 output",
-            "3": "Step 3 output",
-            "4": "Step 4 output",
-        },
-        "total_cost": 0.4,
-        "model_used": "gpt-4",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(state, f)
-
-    # Mock step 7 to return files
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-
-    # Should only call steps 5, 5.5, 6-10 (7 steps), not 1-4
-    assert mock_run.call_count == 7
-
-    # Verify the labels of called steps
-    called_labels = [call.kwargs['label'] for call in mock_run.call_args_list]
-    assert 'step1' not in called_labels
-    assert 'step2' not in called_labels
-    assert 'step3' not in called_labels
-    assert 'step4' not in called_labels
-    assert 'step5' in called_labels
-    assert 'step5_5' in called_labels
-    assert 'step10' in called_labels
-
-
-def test_state_cleared_on_success(mock_dependencies, default_args, tmp_path):
-    """Test that state file is deleted on successful completion."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create initial state file using new naming convention
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "last_completed_step": 0,
-        "step_outputs": {},
-        "total_cost": 0.0,
-        "model_used": "unknown",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(state, f)
-
-    # Mock step 7 to return files
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-
-    # State file should be deleted on success
-    assert not state_file.exists()
-
-
-def test_resume_from_partial_failure_state_reruns_failed_steps(mock_dependencies, default_args, tmp_path):
-    """When resuming from a state where steps 1-3 succeeded but 4-5.5 failed, the workflow should resume from step 4."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create state where steps 1-3 succeeded, steps 4-5.5 failed,
-    # but last_completed_step is incorrectly set to 5.5 (ratchet effect)
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    corrupted_state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "issue_url": default_args["issue_url"],
-        "last_completed_step": 5.5,  # Ratcheted: should be 3
-        "step_outputs": {
-            "1": "No duplicates found",
-            "2": "Confirmed bug",
-            "3": "Sufficient info",
-            "4": "FAILED: All agent providers failed",
-            "5": "FAILED: All agent providers failed",
-            "5.5": "FAILED: All agent providers failed",
-        },
-        "total_cost": 0.3,
-        "model_used": "gpt-4",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(corrupted_state, f)
-
-    # Track which steps are executed
-    executed_steps = []
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        executed_steps.append(label)
-        if label == 'step7':
-            return (True, "FILES_CREATED: test.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    # Step 4 should be re-executed because its cached output is FAILED
-    assert "step4" in executed_steps, (
-        f"Step 4 should be re-executed because its cached output is FAILED, "
-        f"but executed steps were: {executed_steps}. "
-        f"The blind resume skipped failed steps."
-    )
-
-    # Steps 1-3 should NOT be re-executed (they succeeded)
-    assert "step1" not in executed_steps, "Step 1 succeeded and should not be re-run"
-    assert "step2" not in executed_steps, "Step 2 succeeded and should not be re-run"
-    assert "step3" not in executed_steps, "Step 3 succeeded and should not be re-run"
-
-    # Steps 4, 5, 5.5, 6-10 should all be executed (8 steps)
-    assert mock_run.call_count == 8, (
-        f"Expected 8 steps (4, 5, 5.5, 6-10) but got {mock_run.call_count}: {executed_steps}"
-    )
+# ============================================================================
+# NEW TESTS — Appended to test_output.py
+# ============================================================================
+#
+# Test Plan for newly identified gaps:
+#
+#  1. timeout_adder — Verify it is summed with BUG_STEP_TIMEOUTS for every step.
+#  2. 3 consecutive provider failures — Verify early abort at exactly 3 failures.
+#  3. Non-provider failure resets consecutive counter — A "regular" failure resets
+#     the counter so provider-failure counting starts fresh.
+#  4. Worktree creation failure — Graceful early exit when _setup_worktree
+#     returns (None, error_msg).
+#  5. E2E_SKIP non-stop — "E2E_SKIP:" in step 9 does NOT trigger a hard stop;
+#     step 10 still executes.
+#  6. E2E files in step 10 context — E2E_FILES_CREATED files end up in
+#     files_to_stage for step 10.
+#  7. changed_files deduplication — Same path in FILES_CREATED and FILES_MODIFIED
+#     should only appear once in changed_files.
+#  8. User Error specifically — Step 2 "User Error (Not a Bug)" hard stop covers
+#     a separate code branch from Feature Request.
+#  9. verbose flag propagation — verbose=True must reach run_agentic_task.
+# 10. Total cost per-step — Different cost per step sums correctly.
+# 11. model_used reflects last step — After step 10, model comes from step 10.
+# 12. Header message — 🔍 header with issue_number and issue_title printed.
+# 13. use_github_state=False propagation — State functions receive it.
+# 14. DEFECT_TYPE: code continues workflow — Step 5.5 with only DEFECT_TYPE line
+#     does NOT stop; no PROMPT_REVIEW marker present.
+# 15. changed_files restored from state on resume — Previously accumulated
+#     changed_files come back in the return value.
+#
+# Z3 formal verification note: The orchestration logic is primarily string-matching
+# and sequential control flow over external side-effects. Z3 would add little value
+# here — unit tests with mocked dependencies provide sufficient coverage without the
+# overhead of encoding LLM output patterns as formal constraints.
+# ============================================================================
 
 
 import sys
@@ -2762,1475 +2057,806 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
+import json
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
-from pdd.agentic_bug_orchestrator import run_agentic_bug_orchestrator
 
-# --- Fixtures ---
-
-@pytest.fixture
-def mock_dependencies(tmp_path):
-    """Mocks external dependencies for the orchestrator."""
-    with patch("pdd.agentic_bug_orchestrator.run_agentic_task") as mock_run, \
-         patch("pdd.agentic_bug_orchestrator.load_prompt_template") as mock_load, \
-         patch("pdd.agentic_bug_orchestrator.console") as mock_console, \
-         patch("pdd.agentic_bug_orchestrator._setup_worktree") as mock_worktree:
-
-        # Default behavior: successful run, generic output
-        mock_run.return_value = (True, "Step output", 0.1, "gpt-4")
-        mock_load.return_value = "Prompt for {issue_number}"
-        mock_worktree.return_value = (tmp_path, None)
-
-        yield mock_run, mock_load, mock_console
+from pdd.agentic_bug_orchestrator import (
+    BUG_STEP_TIMEOUTS,
+    _get_state_dir,
+    run_agentic_bug_orchestrator,
+)
 
 
-@pytest.fixture
-def default_args(tmp_path):
-    """Provides default arguments for the orchestrator function."""
-    return {
-        "issue_url": "http://github.com/owner/repo/issues/1",
-        "issue_content": "Bug description",
-        "repo_owner": "owner",
-        "repo_name": "repo",
-        "issue_number": 1,
-        "issue_author": "user",
-        "issue_title": "Bug Title",
-        "cwd": tmp_path,
-        "verbose": False,
-        "quiet": True
-    }
-
-
-# --- Tests ---
-
-def test_happy_path_execution(mock_dependencies, default_args):
-    """Test that all 11 steps execute successfully when no stop conditions are met."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    # Setup mock to return FILES_CREATED in step 7 output to avoid hard stop
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "Investigation complete" in msg
-    assert mock_run.call_count == 11  # 11 steps including step 5.5
-    assert cost == pytest.approx(1.1)  # 11 steps × 0.1 each
-    assert files == ["test_file.py"]
-    assert model == "gpt-4"
-
-
-def test_hard_stop_step_1_duplicate(mock_dependencies, default_args):
-    """Test early exit at Step 1 if issue is a duplicate."""
+def test_timeout_adder_added_to_step_timeouts(mock_dependencies, default_args):
+    """
+    Verify that a non-zero timeout_adder is summed with BUG_STEP_TIMEOUTS
+    for every step passed to run_agentic_task.
+    """
     mock_run, _, _ = mock_dependencies
+    timeout_adder = 60.0
 
-    # Mock step 1 output to trigger hard stop
-    mock_run.return_value = (True, "This looks like a Duplicate of #42", 0.05, "claude")
-
-    success, msg, cost, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 1" in msg
-    assert "duplicate" in msg.lower()
-    assert mock_run.call_count == 1
-    assert cost == 0.05
-
-
-def test_hard_stop_step_2_not_a_bug(mock_dependencies, default_args):
-    """Test early exit at Step 2 if issue is a feature request or user error."""
-    mock_run, _, _ = mock_dependencies
-
-    # Step 1 passes, Step 2 fails
-    mock_run.side_effect = [
-        (True, "Step 1 ok", 0.1, "model"),
-        (True, "Analysis: Feature Request (Not a Bug)", 0.1, "model")
-    ]
-
-    success, msg, cost, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 2" in msg
-    assert "Feature Request" in msg
-    assert mock_run.call_count == 2
-
-
-def test_hard_stop_step_3_needs_info(mock_dependencies, default_args):
-    """Test early exit at Step 3 if more info is needed."""
-    mock_run, _, _ = mock_dependencies
-
-    # Steps 1-2 pass, Step 3 fails
-    mock_run.side_effect = [
-        (True, "Step 1 ok", 0.1, "model"),
-        (True, "Step 2 ok", 0.1, "model"),
-        (True, "Cannot proceed. Needs More Info from user.", 0.1, "model")
-    ]
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 3" in msg
-    assert "information" in msg.lower() or "info" in msg.lower()
-    assert mock_run.call_count == 3
-
-
-def test_hard_stop_step_5_5_prompt_review(mock_dependencies, default_args):
-    """Test early exit at Step 5.5 if prompt needs human review."""
-    mock_run, _, _ = mock_dependencies
-
-    # Steps 1-5 pass, Step 5.5 triggers hard stop
     def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step5_5':
-            return (True, "PROMPT_REVIEW: Ambiguous whether to fix code or prompt", 0.1, "model")
+        label = kwargs.get("label", "")
+        if label == "step7":
+            return (True, "FILES_CREATED: test.py", 0.1, "model")
         return (True, "ok", 0.1, "model")
 
     mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 5.5" in msg
-    assert "Ambiguous" in msg or "prompt" in msg.lower()
-    assert mock_run.call_count == 6
-
-
-def test_step_5_5_prompt_fixed_tracking(mock_dependencies, default_args):
-    """Test that PROMPT_FIXED: output from step 5.5 is tracked in changed_files."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step5_5':
-            return (True, "DEFECT_TYPE: prompt\nPROMPT_FIXED: prompts/my_module_python.prompt", 0.1, "model")
-        if label == 'step7':
-            return (True, "FILES_CREATED: tests/test_fix.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "prompts/my_module_python.prompt" in changed_files
-    assert "tests/test_fix.py" in changed_files
-
-
-def test_hard_stop_step_7_no_file_generated(mock_dependencies, default_args):
-    """Test early exit at Step 7 if no test file is generated."""
-    mock_run, _, _ = mock_dependencies
-
-    # Steps 1-6 (including 5.5) pass generic
-    # Step 7 returns no FILES_CREATED line
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "I could not generate a test.", 0.1, "model")  # No FILES_CREATED line
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 7" in msg
-    assert "No test file" in msg or "no test" in msg.lower()
-    assert mock_run.call_count == 8
-
-
-def test_hard_stop_step_8_verification_failed(mock_dependencies, default_args):
-    """Test early exit at Step 8 if test verification fails."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        if label == 'step8':
-            return (True, "FAIL: Test does not work as expected", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 8" in msg
-    assert "verification" in msg.lower() or "fail" in msg.lower()
-    assert mock_run.call_count == 9
-
-
-def test_soft_failure_continuation(mock_dependencies, default_args):
-    """Test that the workflow continues if a step returns success=False but does NOT trigger a hard stop condition string."""
-    mock_run, _, _ = mock_dependencies
-
-    # Step 1 fails (agent error) but no hard stop text
-    # Step 7 needs to return a file to avoid hard stop there
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step1':
-            return (False, "Agent had a hiccup but produced output", 0.1, "model")
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "Investigation complete" in msg
-    assert mock_run.call_count == 11  # 11 steps including 5.5
-
-
-def test_template_loading_failure(mock_dependencies, default_args):
-    """Test graceful exit if a prompt template cannot be loaded."""
-    mock_run, mock_load, _ = mock_dependencies
-    
-    # Mock template loader to return None for step 1
-    mock_load.return_value = None
-    
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-    
-    assert success is False
-    assert "prompt template" in msg.lower() or "Missing" in msg
-    assert mock_run.call_count == 0
-
-
-def test_template_formatting_unknown_keys_are_passed_through(mock_dependencies, default_args):
-    """Test that templates with unknown keys (after preprocessing) are passed through as literal text."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    # Return a template that has an unknown key
-    mock_load.return_value = "This template needs {non_existent_key}"
-
-    # Setup mock to return FILES_CREATED in step 7 to avoid hard stop
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-    mock_run.side_effect = side_effect_run
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    # With preprocess, unknown keys don't cause KeyError - they become literal text
-    # The orchestrator should continue execution
-    assert mock_run.call_count > 0, "Orchestrator should execute steps (unknown keys are passed through)"
-
-
-def test_context_accumulation(mock_dependencies, default_args):
-    """Verify that output from previous steps is passed to subsequent steps via template formatting."""
-    mock_run, mock_load, _ = mock_dependencies
-    
-    # We want to verify that step 2 receives step 1's output
-    # We need to ensure step 1 template doesn't fail formatting
-    def side_effect_load(name):
-        if "step1" in name:
-            return "Step 1 prompt"
-        if "step2" in name:
-            return "Context: {step1_output}"
-        return "Generic prompt"
-    
-    mock_load.side_effect = side_effect_load
-    
-    # Step 1 output
-    step1_out = "Output from step 1"
-    
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step1':
-            return (True, step1_out, 0.1, "model")
-        if label == 'step7':
-            return (True, "gen\nFILES_CREATED: f.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-        
-    mock_run.side_effect = side_effect_run
-    
-    run_agentic_bug_orchestrator(**default_args)
-    
-    # Check the call args for step 2
-    step2_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step2':
-            step2_call = call_obj
-            break
-            
-    assert step2_call is not None
-    instruction_arg = step2_call.kwargs['instruction']
-    # The instruction should have been formatted with step1_output
-    assert f"Context: {step1_out}" == instruction_arg
-
-
-def test_file_accumulation(mock_dependencies, default_args):
-    """Verify that changed files from multiple steps are accumulated and deduplicated."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Only Step 7 reports files via FILES_CREATED
-            return (True, "gen\nFILES_CREATED: test.py, repro.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    _, _, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should contain both, no duplicates
-    assert len(changed_files) == 2
-    assert "repro.py" in changed_files
-    assert "test.py" in changed_files
-
-
-def test_step7_files_modified_for_append(mock_dependencies, default_args):
-    """Test that FILES_MODIFIED marker is parsed correctly when appending to existing test files."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 appends to existing file, uses FILES_MODIFIED instead of FILES_CREATED
-            return (True, "Appended test to existing file\nFILES_MODIFIED: tests/test_existing_module.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should succeed - FILES_MODIFIED is a valid marker for step 7
-    assert success is True
-    assert "tests/test_existing_module.py" in changed_files
-    assert mock_run.call_count == 11  # 11 steps including 5.5
-
-
-def test_step_timeouts_passed_to_run_agentic_task(mock_dependencies, default_args):
-    """Test that step-specific timeouts from BUG_STEP_TIMEOUTS are passed to run_agentic_task."""
-    from pdd.agentic_bug_orchestrator import BUG_STEP_TIMEOUTS
-
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
+    default_args["timeout_adder"] = timeout_adder
 
     run_agentic_bug_orchestrator(**default_args)
 
-    # Verify timeout is passed for each step (11 steps including 5.5)
     assert mock_run.call_count == 11
-
     for call_obj in mock_run.call_args_list:
-        label = call_obj.kwargs.get('label', '')
-        timeout = call_obj.kwargs.get('timeout')
-
-        # Extract step number from label (e.g., 'step7' -> 7.0, 'step5_5' -> 5.5)
-        step_str = label.replace('step', '').replace('_', '.')
+        label = call_obj.kwargs.get("label", "")
+        actual_timeout = call_obj.kwargs.get("timeout")
+        step_str = label.replace("step", "").replace("_", ".")
         step_num = float(step_str)
-        expected_timeout = BUG_STEP_TIMEOUTS.get(step_num, 340.0)
-
-        assert timeout == expected_timeout, (
-            f"Step {step_num}: expected timeout={expected_timeout}, got timeout={timeout}"
+        expected_timeout = BUG_STEP_TIMEOUTS.get(step_num, 340.0) + timeout_adder
+        assert actual_timeout == pytest.approx(expected_timeout), (
+            f"Step {step_num}: expected timeout {expected_timeout}, got {actual_timeout}"
         )
 
 
-def test_files_to_stage_passed_to_step10(mock_dependencies, default_args):
-    """Test that files_to_stage context variable is passed to Step 10 (PR)."""
-    mock_run, mock_load, _ = mock_dependencies
+def test_three_consecutive_provider_failures_trigger_early_abort(mock_dependencies, default_args):
+    """
+    Verify that exactly 3 consecutive 'All agent providers failed' outputs
+    cause the orchestrator to abort early with a descriptive message.
+    """
+    mock_run, _, _ = mock_dependencies
 
-    # Setup templates that use the files_to_stage variable
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Files to stage: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: tests/test_bug_fix.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    # Find the Step 10 call and verify files_to_stage was formatted into the prompt
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None, "Step 10 should have been called"
-    instruction = step10_call.kwargs['instruction']
-    assert instruction == "Files to stage: tests/test_bug_fix.py"
-
-
-def test_files_to_stage_with_multiple_files(mock_dependencies, default_args):
-    """Test that multiple files are correctly joined in files_to_stage."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Stage these: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 creates multiple files
-            return (True, "Generated test\nFILES_CREATED: tests/test_bug.py, tests/conftest.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None
-    instruction = step10_call.kwargs['instruction']
-    # Both files should be in the instruction, comma-separated
-    assert "tests/test_bug.py" in instruction
-    assert "tests/conftest.py" in instruction
-
-
-def test_files_to_stage_with_modified_files(mock_dependencies, default_args):
-    """Test that FILES_MODIFIED files are also included in files_to_stage."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Stage: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 modifies an existing file
-            return (True, "appended\nFILES_MODIFIED: tests/test_existing.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None
-    instruction = step10_call.kwargs['instruction']
-    assert "tests/test_existing.py" in instruction
-
-
-def test_hard_stop_step_9_e2e_fail(mock_dependencies, default_args):
-    """Test early exit at Step 9 if E2E test fails to catch the bug."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        if label == 'step9':
-            return (True, "E2E test ran but...\nE2E_FAIL: Test does not catch bug correctly", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
+    # Every step fails with the provider error message
+    mock_run.return_value = (False, "All agent providers failed", 0.0, "")
 
     success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
 
     assert success is False
-    assert "Stopped at Step 9" in msg
-    assert "E2E test does not catch bug" in msg
-    assert mock_run.call_count == 10
-
-
-def test_e2e_files_accumulated(mock_dependencies, default_args):
-    """Test that E2E files from Step 9 are added to changed_files."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated unit test\nFILES_CREATED: tests/test_unit.py", 0.1, "gpt-4")
-        if label == 'step9':
-            return (True, "Generated E2E test\nE2E_FILES_CREATED: tests/e2e/test_e2e_bug.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "tests/test_unit.py" in files
-    assert "tests/e2e/test_e2e_bug.py" in files
-
-
-def test_state_save_after_each_step(mock_dependencies, default_args, tmp_path):
-    """Test that state is saved after each step completes."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Run only 2 steps then fail on step 3
-    call_count = [0]
-    def side_effect_run(*args, **kwargs):
-        call_count[0] += 1
-        label = kwargs.get('label', '')
-        if label == 'step3':
-            # Return "Needs More Info" to trigger hard stop
-            return (True, "Needs More Info", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should have stopped at step 3
-    assert success is False
-    assert "Step 3" in msg
-
-    # State file should exist with last_completed_step = 2 (hard stop returns BEFORE saving)
-    state_dir = _get_state_dir(tmp_path)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-    assert state_file.exists(), f"State file not found at {state_file}"
-    with open(state_file) as f:
-        state = json.load(f)
-    assert state is not None
-    assert state["last_completed_step"] == 2  # Hard stop at step 3 returns before saving step 3
-    assert "1" in state["step_outputs"]
-    assert "2" in state["step_outputs"]
-
-
-def test_resume_skips_completed_steps(mock_dependencies, default_args, tmp_path):
-    """Test that resuming from step 5 skips steps 1-4."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create state file with last_completed_step=4 using new naming convention
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "issue_url": default_args["issue_url"],
-        "last_completed_step": 4,
-        "step_outputs": {
-            "1": "Step 1 output",
-            "2": "Step 2 output",
-            "3": "Step 3 output",
-            "4": "Step 4 output",
-        },
-        "total_cost": 0.4,
-        "model_used": "gpt-4",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(state, f)
-
-    # Mock step 7 to return files
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-
-    # Should only call steps 5, 5.5, 6-10 (7 steps), not 1-4
-    assert mock_run.call_count == 7
-
-    # Verify the labels of called steps
-    called_labels = [call.kwargs['label'] for call in mock_run.call_args_list]
-    assert 'step1' not in called_labels
-    assert 'step2' not in called_labels
-    assert 'step3' not in called_labels
-    assert 'step4' not in called_labels
-    assert 'step5' in called_labels
-    assert 'step5_5' in called_labels
-    assert 'step10' in called_labels
-
-
-def test_state_cleared_on_success(mock_dependencies, default_args, tmp_path):
-    """Test that state file is deleted on successful completion."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create initial state file using new naming convention
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "last_completed_step": 0,
-        "step_outputs": {},
-        "total_cost": 0.0,
-        "model_used": "unknown",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(state, f)
-
-    # Mock step 7 to return files
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-
-    # State file should be deleted on success
-    assert not state_file.exists()
-
-
-def test_resume_from_partial_failure_state_reruns_failed_steps(mock_dependencies, default_args, tmp_path):
-    """When resuming from a state where steps 1-3 succeeded but 4-5.5 failed, the workflow should resume from step 4."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create state where steps 1-3 succeeded, steps 4-5.5 failed,
-    # but last_completed_step is incorrectly set to 5.5 (ratchet effect)
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    corrupted_state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "issue_url": default_args["issue_url"],
-        "last_completed_step": 5.5,  # Ratcheted: should be 3
-        "step_outputs": {
-            "1": "No duplicates found",
-            "2": "Confirmed bug",
-            "3": "Sufficient info",
-            "4": "FAILED: All agent providers failed",
-            "5": "FAILED: All agent providers failed",
-            "5.5": "FAILED: All agent providers failed",
-        },
-        "total_cost": 0.3,
-        "model_used": "gpt-4",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(corrupted_state, f)
-
-    # Track which steps are executed
-    executed_steps = []
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        executed_steps.append(label)
-        if label == 'step7':
-            return (True, "FILES_CREATED: test.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    # Step 4 should be re-executed because its cached output is FAILED
-    assert "step4" in executed_steps, (
-        f"Step 4 should be re-executed because its cached output is FAILED, "
-        f"but executed steps were: {executed_steps}. "
-        f"The blind resume skipped failed steps."
+    # Abort message should mention consecutive failures or aborting
+    assert (
+        "Aborting" in msg
+        or "consecutive" in msg.lower()
+        or "providers" in msg.lower()
     )
-
-    # Steps 1-3 should NOT be re-executed (they succeeded)
-    assert "step1" not in executed_steps, "Step 1 succeeded and should not be re-run"
-    assert "step2" not in executed_steps, "Step 2 succeeded and should not be re-run"
-    assert "step3" not in executed_steps, "Step 3 succeeded and should not be re-run"
-
-    # Steps 4, 5, 5.5, 6-10 should all be executed (8 steps)
-    assert mock_run.call_count == 8, (
-        f"Expected 8 steps (4, 5, 5.5, 6-10) but got {mock_run.call_count}: {executed_steps}"
-    )
-
-
-import sys
-from pathlib import Path
-
-# Add project root to sys.path to ensure local code is prioritized
-# This allows testing local changes without installing the package
-project_root = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(project_root))
-
-import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
-from pdd.agentic_bug_orchestrator import run_agentic_bug_orchestrator
-
-# --- Fixtures ---
-
-@pytest.fixture
-def mock_dependencies(tmp_path):
-    """Mocks external dependencies for the orchestrator."""
-    with patch("pdd.agentic_bug_orchestrator.run_agentic_task") as mock_run, \
-         patch("pdd.agentic_bug_orchestrator.load_prompt_template") as mock_load, \
-         patch("pdd.agentic_bug_orchestrator.console") as mock_console, \
-         patch("pdd.agentic_bug_orchestrator._setup_worktree") as mock_worktree:
-
-        # Default behavior: successful run, generic output
-        mock_run.return_value = (True, "Step output", 0.1, "gpt-4")
-        mock_load.return_value = "Prompt for {issue_number}"
-        mock_worktree.return_value = (tmp_path, None)
-
-        yield mock_run, mock_load, mock_console
-
-
-@pytest.fixture
-def default_args(tmp_path):
-    """Provides default arguments for the orchestrator function."""
-    return {
-        "issue_url": "http://github.com/owner/repo/issues/1",
-        "issue_content": "Bug description",
-        "repo_owner": "owner",
-        "repo_name": "repo",
-        "issue_number": 1,
-        "issue_author": "user",
-        "issue_title": "Bug Title",
-        "cwd": tmp_path,
-        "verbose": False,
-        "quiet": True
-    }
-
-
-# --- Tests ---
-
-def test_happy_path_execution(mock_dependencies, default_args):
-    """Test that all 11 steps execute successfully when no stop conditions are met."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    # Setup mock to return FILES_CREATED in step 7 output to avoid hard stop
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "Investigation complete" in msg
-    assert mock_run.call_count == 11  # 11 steps including step 5.5
-    assert cost == pytest.approx(1.1)  # 11 steps × 0.1 each
-    assert files == ["test_file.py"]
-    assert model == "gpt-4"
-
-
-def test_hard_stop_step_1_duplicate(mock_dependencies, default_args):
-    """Test early exit at Step 1 if issue is a duplicate."""
-    mock_run, _, _ = mock_dependencies
-
-    # Mock step 1 output to trigger hard stop
-    mock_run.return_value = (True, "This looks like a Duplicate of #42", 0.05, "claude")
-
-    success, msg, cost, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 1" in msg
-    assert "duplicate" in msg.lower()
-    assert mock_run.call_count == 1
-    assert cost == 0.05
-
-
-def test_hard_stop_step_2_not_a_bug(mock_dependencies, default_args):
-    """Test early exit at Step 2 if issue is a feature request or user error."""
-    mock_run, _, _ = mock_dependencies
-
-    # Step 1 passes, Step 2 fails
-    mock_run.side_effect = [
-        (True, "Step 1 ok", 0.1, "model"),
-        (True, "Analysis: Feature Request (Not a Bug)", 0.1, "model")
-    ]
-
-    success, msg, cost, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 2" in msg
-    assert "Feature Request" in msg
-    assert mock_run.call_count == 2
-
-
-def test_hard_stop_step_3_needs_info(mock_dependencies, default_args):
-    """Test early exit at Step 3 if more info is needed."""
-    mock_run, _, _ = mock_dependencies
-
-    # Steps 1-2 pass, Step 3 fails
-    mock_run.side_effect = [
-        (True, "Step 1 ok", 0.1, "model"),
-        (True, "Step 2 ok", 0.1, "model"),
-        (True, "Cannot proceed. Needs More Info from user.", 0.1, "model")
-    ]
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 3" in msg
-    assert "information" in msg.lower() or "info" in msg.lower()
+    # The abort should fire after 3 consecutive provider failures
     assert mock_run.call_count == 3
 
 
-def test_hard_stop_step_5_5_prompt_review(mock_dependencies, default_args):
-    """Test early exit at Step 5.5 if prompt needs human review."""
+def test_non_provider_failure_resets_consecutive_counter(mock_dependencies, default_args):
+    """
+    Verify that a non-provider-failure step resets the consecutive provider
+    failure counter, so 3 non-consecutive provider failures do NOT abort.
+    """
     mock_run, _, _ = mock_dependencies
 
-    # Steps 1-5 pass, Step 5.5 triggers hard stop
     def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step5_5':
-            return (True, "PROMPT_REVIEW: Ambiguous whether to fix code or prompt", 0.1, "model")
+        label = kwargs.get("label", "")
+        # Step 1 and step 3 fail with provider error; step 2 fails differently
+        if label == "step1":
+            return (False, "All agent providers failed", 0.0, "")
+        if label == "step2":
+            # Non-provider failure: should reset the counter
+            return (False, "Timeout waiting for response", 0.05, "model")
+        if label == "step3":
+            return (False, "All agent providers failed", 0.0, "")
+        if label == "step7":
+            return (True, "FILES_CREATED: test.py", 0.1, "model")
         return (True, "ok", 0.1, "model")
 
     mock_run.side_effect = side_effect
 
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
 
-    assert success is False
-    assert "Stopped at Step 5.5" in msg
-    assert "Ambiguous" in msg or "prompt" in msg.lower()
-    assert mock_run.call_count == 6
-
-
-def test_step_5_5_prompt_fixed_tracking(mock_dependencies, default_args):
-    """Test that PROMPT_FIXED: output from step 5.5 is tracked in changed_files."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step5_5':
-            return (True, "DEFECT_TYPE: prompt\nPROMPT_FIXED: prompts/my_module_python.prompt", 0.1, "model")
-        if label == 'step7':
-            return (True, "FILES_CREATED: tests/test_fix.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
+    # The non-provider failure at step 2 resets the counter, so we should NOT
+    # abort after 3 total calls — all 11 steps should execute
+    assert mock_run.call_count == 11, (
+        f"Non-provider failure should reset counter; expected 11 steps, got {mock_run.call_count}"
+    )
     assert success is True
-    assert "prompts/my_module_python.prompt" in changed_files
-    assert "tests/test_fix.py" in changed_files
 
 
-def test_hard_stop_step_7_no_file_generated(mock_dependencies, default_args):
-    """Test early exit at Step 7 if no test file is generated."""
-    mock_run, _, _ = mock_dependencies
+def test_worktree_creation_failure_returns_early(default_args, tmp_path):
+    """
+    Verify that a failed worktree creation causes an immediate early exit
+    before step 5.5 runs.
+    """
+    default_args["cwd"] = tmp_path
 
-    # Steps 1-6 (including 5.5) pass generic
-    # Step 7 returns no FILES_CREATED line
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "I could not generate a test.", 0.1, "model")  # No FILES_CREATED line
-        return (True, "ok", 0.1, "model")
+    with (
+        patch("pdd.agentic_bug_orchestrator.run_agentic_task") as mock_run,
+        patch("pdd.agentic_bug_orchestrator.load_prompt_template") as mock_load,
+        patch("pdd.agentic_bug_orchestrator.console"),
+        patch("pdd.agentic_bug_orchestrator._setup_worktree") as mock_worktree,
+        patch("pdd.agentic_bug_orchestrator.load_workflow_state", return_value=(None, None)),
+        patch("pdd.agentic_bug_orchestrator.save_workflow_state", return_value=None),
+    ):
+        mock_load.return_value = "Prompt for {issue_number}"
+        mock_worktree.return_value = (None, "git: not a git repository")
+        mock_run.return_value = (True, "ok", 0.1, "model")
 
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 7" in msg
-    assert "No test file" in msg or "no test" in msg.lower()
-    assert mock_run.call_count == 8
-
-
-def test_hard_stop_step_8_verification_failed(mock_dependencies, default_args):
-    """Test early exit at Step 8 if test verification fails."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        if label == 'step8':
-            return (True, "FAIL: Test does not work as expected", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
+        success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
 
     assert success is False
-    assert "Stopped at Step 8" in msg
-    assert "verification" in msg.lower() or "fail" in msg.lower()
-    assert mock_run.call_count == 9
+    assert "Failed to create worktree" in msg
+
+    # Steps 5.5 and beyond must NOT have run
+    called_labels = [c.kwargs.get("label") for c in mock_run.call_args_list]
+    assert "step5_5" not in called_labels
+    assert "step6" not in called_labels
+    assert "step10" not in called_labels
 
 
-def test_soft_failure_continuation(mock_dependencies, default_args):
-    """Test that the workflow continues if a step returns success=False but does NOT trigger a hard stop condition string."""
+def test_e2e_skip_continues_to_step_10(mock_dependencies, default_args):
+    """
+    Verify that 'E2E_SKIP:' in step 9 output does NOT trigger a hard stop;
+    step 10 must still execute.
+    """
     mock_run, _, _ = mock_dependencies
 
-    # Step 1 fails (agent error) but no hard stop text
-    # Step 7 needs to return a file to avoid hard stop there
     def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step1':
-            return (False, "Agent had a hiccup but produced output", 0.1, "model")
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
+        label = kwargs.get("label", "")
+        if label == "step7":
+            return (True, "FILES_CREATED: test.py", 0.1, "model")
+        if label == "step9":
+            return (True, "E2E_SKIP: No E2E test framework detected in repo", 0.1, "model")
         return (True, "ok", 0.1, "model")
 
     mock_run.side_effect = side_effect
 
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
 
     assert success is True
     assert "Investigation complete" in msg
-    assert mock_run.call_count == 11  # 11 steps including 5.5
-
-
-def test_template_loading_failure(mock_dependencies, default_args):
-    """Test graceful exit if a prompt template cannot be loaded."""
-    mock_run, mock_load, _ = mock_dependencies
-    
-    # Mock template loader to return None for step 1
-    mock_load.return_value = None
-    
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-    
-    assert success is False
-    assert "prompt template" in msg.lower() or "Missing" in msg
-    assert mock_run.call_count == 0
-
-
-def test_template_formatting_unknown_keys_are_passed_through(mock_dependencies, default_args):
-    """Test that templates with unknown keys (after preprocessing) are passed through as literal text."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    # Return a template that has an unknown key
-    mock_load.return_value = "This template needs {non_existent_key}"
-
-    # Setup mock to return FILES_CREATED in step 7 to avoid hard stop
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-    mock_run.side_effect = side_effect_run
-
-    success, msg, _, _, _ = run_agentic_bug_orchestrator(**default_args)
-
-    # With preprocess, unknown keys don't cause KeyError - they become literal text
-    # The orchestrator should continue execution
-    assert mock_run.call_count > 0, "Orchestrator should execute steps (unknown keys are passed through)"
-
-
-def test_context_accumulation(mock_dependencies, default_args):
-    """Verify that output from previous steps is passed to subsequent steps via template formatting."""
-    mock_run, mock_load, _ = mock_dependencies
-    
-    # We want to verify that step 2 receives step 1's output
-    # We need to ensure step 1 template doesn't fail formatting
-    def side_effect_load(name):
-        if "step1" in name:
-            return "Step 1 prompt"
-        if "step2" in name:
-            return "Context: {step1_output}"
-        return "Generic prompt"
-    
-    mock_load.side_effect = side_effect_load
-    
-    # Step 1 output
-    step1_out = "Output from step 1"
-    
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step1':
-            return (True, step1_out, 0.1, "model")
-        if label == 'step7':
-            return (True, "gen\nFILES_CREATED: f.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-        
-    mock_run.side_effect = side_effect_run
-    
-    run_agentic_bug_orchestrator(**default_args)
-    
-    # Check the call args for step 2
-    step2_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step2':
-            step2_call = call_obj
-            break
-            
-    assert step2_call is not None
-    instruction_arg = step2_call.kwargs['instruction']
-    # The instruction should have been formatted with step1_output
-    assert f"Context: {step1_out}" == instruction_arg
-
-
-def test_file_accumulation(mock_dependencies, default_args):
-    """Verify that changed files from multiple steps are accumulated and deduplicated."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Only Step 7 reports files via FILES_CREATED
-            return (True, "gen\nFILES_CREATED: test.py, repro.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    _, _, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should contain both, no duplicates
-    assert len(changed_files) == 2
-    assert "repro.py" in changed_files
-    assert "test.py" in changed_files
-
-
-def test_step7_files_modified_for_append(mock_dependencies, default_args):
-    """Test that FILES_MODIFIED marker is parsed correctly when appending to existing test files."""
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 appends to existing file, uses FILES_MODIFIED instead of FILES_CREATED
-            return (True, "Appended test to existing file\nFILES_MODIFIED: tests/test_existing_module.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    success, msg, _, _, changed_files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should succeed - FILES_MODIFIED is a valid marker for step 7
-    assert success is True
-    assert "tests/test_existing_module.py" in changed_files
-    assert mock_run.call_count == 11  # 11 steps including 5.5
-
-
-def test_step_timeouts_passed_to_run_agentic_task(mock_dependencies, default_args):
-    """Test that step-specific timeouts from BUG_STEP_TIMEOUTS are passed to run_agentic_task."""
-    from pdd.agentic_bug_orchestrator import BUG_STEP_TIMEOUTS
-
-    mock_run, _, _ = mock_dependencies
-
-    def side_effect(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test.py", 0.1, "model")
-        return (True, "ok", 0.1, "model")
-
-    mock_run.side_effect = side_effect
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    # Verify timeout is passed for each step (11 steps including 5.5)
     assert mock_run.call_count == 11
 
+    called_labels = [c.kwargs.get("label") for c in mock_run.call_args_list]
+    assert "step10" in called_labels, "Step 10 (PR) should still run after E2E_SKIP"
+
+
+def test_e2e_files_propagated_to_step_10_files_to_stage(mock_dependencies, default_args):
+    """
+    Verify that E2E test files parsed from step 9 (E2E_FILES_CREATED) appear
+    in the 'files_to_stage' context variable that step 10 uses.
+    """
+    mock_run, mock_load, _ = mock_dependencies
+
+    def side_effect_load(name):
+        if "step10" in name:
+            return "Stage all: {files_to_stage}"
+        return "Prompt for {issue_number}"
+
+    mock_load.side_effect = side_effect_load
+
+    def side_effect_run(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step7":
+            return (True, "FILES_CREATED: tests/test_unit.py", 0.1, "model")
+        if label == "step9":
+            return (
+                True,
+                "All good\nE2E_FILES_CREATED: tests/e2e/test_e2e_issue.py",
+                0.1,
+                "model",
+            )
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect_run
+
+    success, msg, cost, model, changed_files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is True
+    # Both unit and E2E files should be in changed_files
+    assert "tests/test_unit.py" in changed_files
+    assert "tests/e2e/test_e2e_issue.py" in changed_files
+
+    # Step 10 instruction must contain both files
+    step10_call = next(
+        (c for c in mock_run.call_args_list if c.kwargs.get("label") == "step10"),
+        None,
+    )
+    assert step10_call is not None
+    instruction = step10_call.kwargs["instruction"]
+    assert "tests/test_unit.py" in instruction
+    assert "tests/e2e/test_e2e_issue.py" in instruction
+
+
+def test_changed_files_deduplicated_when_same_path_appears_twice(mock_dependencies, default_args):
+    """
+    Verify that the same file path in both FILES_CREATED and FILES_MODIFIED
+    lines results in only one entry in changed_files (order-preserving dedup).
+    """
+    mock_run, _, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step7":
+            # Same path reported under both markers
+            return (
+                True,
+                "gen\nFILES_CREATED: tests/test_bug.py\nFILES_MODIFIED: tests/test_bug.py",
+                0.1,
+                "model",
+            )
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    success, msg, cost, model, changed_files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is True
+    assert changed_files.count("tests/test_bug.py") == 1, (
+        "Duplicate file path should appear only once in changed_files"
+    )
+
+
+def test_hard_stop_step_2_user_error_specifically(mock_dependencies, default_args):
+    """
+    Verify that the 'User Error (Not a Bug)' detection at step 2 is a distinct
+    hard stop (separate code branch from Feature Request).
+    """
+    mock_run, _, _ = mock_dependencies
+
+    mock_run.side_effect = [
+        (True, "No duplicates found", 0.1, "model"),
+        (True, "Verdict: User Error (Not a Bug) — user misread the documentation", 0.1, "model"),
+    ]
+
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is False
+    assert "Stopped at Step 2" in msg
+    assert "User Error" in msg
+    assert mock_run.call_count == 2
+
+
+def test_verbose_flag_propagated_to_every_run_agentic_task_call(mock_dependencies, default_args):
+    """
+    Verify that verbose=True is forwarded to every run_agentic_task invocation.
+    """
+    mock_run, _, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step7":
+            return (True, "FILES_CREATED: test.py", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+    default_args["verbose"] = True
+
+    run_agentic_bug_orchestrator(**default_args)
+
+    assert mock_run.call_count == 11
     for call_obj in mock_run.call_args_list:
-        label = call_obj.kwargs.get('label', '')
-        timeout = call_obj.kwargs.get('timeout')
-
-        # Extract step number from label (e.g., 'step7' -> 7.0, 'step5_5' -> 5.5)
-        step_str = label.replace('step', '').replace('_', '.')
-        step_num = float(step_str)
-        expected_timeout = BUG_STEP_TIMEOUTS.get(step_num, 340.0)
-
-        assert timeout == expected_timeout, (
-            f"Step {step_num}: expected timeout={expected_timeout}, got timeout={timeout}"
+        label = call_obj.kwargs.get("label", "?")
+        assert call_obj.kwargs.get("verbose") is True, (
+            f"Step {label}: verbose=True should be passed to run_agentic_task"
         )
 
 
-def test_files_to_stage_passed_to_step10(mock_dependencies, default_args):
-    """Test that files_to_stage context variable is passed to Step 10 (PR)."""
-    mock_run, mock_load, _ = mock_dependencies
+def test_total_cost_accumulates_per_step_costs(mock_dependencies, default_args):
+    """
+    Verify that total_cost is the precise sum of individual step costs,
+    including when step costs vary.
+    """
+    mock_run, _, _ = mock_dependencies
 
-    # Setup templates that use the files_to_stage variable
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Files to stage: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: tests/test_bug_fix.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    # Find the Step 10 call and verify files_to_stage was formatted into the prompt
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None, "Step 10 should have been called"
-    instruction = step10_call.kwargs['instruction']
-    assert instruction == "Files to stage: tests/test_bug_fix.py"
-
-
-def test_files_to_stage_with_multiple_files(mock_dependencies, default_args):
-    """Test that multiple files are correctly joined in files_to_stage."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Stage these: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 creates multiple files
-            return (True, "Generated test\nFILES_CREATED: tests/test_bug.py, tests/conftest.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None
-    instruction = step10_call.kwargs['instruction']
-    # Both files should be in the instruction, comma-separated
-    assert "tests/test_bug.py" in instruction
-    assert "tests/conftest.py" in instruction
-
-
-def test_files_to_stage_with_modified_files(mock_dependencies, default_args):
-    """Test that FILES_MODIFIED files are also included in files_to_stage."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_load(name):
-        if "step10" in name:
-            return "Stage: {files_to_stage}"
-        return "Generic prompt for {issue_number}"
-
-    mock_load.side_effect = side_effect_load
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            # Step 7 modifies an existing file
-            return (True, "appended\nFILES_MODIFIED: tests/test_existing.py", 0.1, "gpt-4")
-        return (True, "ok", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    run_agentic_bug_orchestrator(**default_args)
-
-    step10_call = None
-    for call_obj in mock_run.call_args_list:
-        if call_obj.kwargs.get('label') == 'step10':
-            step10_call = call_obj
-            break
-
-    assert step10_call is not None
-    instruction = step10_call.kwargs['instruction']
-    assert "tests/test_existing.py" in instruction
-
-
-def test_hard_stop_step_9_e2e_fail(mock_dependencies, default_args):
-    """Test early exit at Step 9 if E2E test fails to catch the bug."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        if label == 'step9':
-            return (True, "E2E test ran but...\nE2E_FAIL: Test does not catch bug correctly", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is False
-    assert "Stopped at Step 9" in msg
-    assert "E2E test does not catch bug" in msg
-    assert mock_run.call_count == 10
-
-
-def test_e2e_files_accumulated(mock_dependencies, default_args):
-    """Test that E2E files from Step 9 are added to changed_files."""
-    mock_run, mock_load, _ = mock_dependencies
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated unit test\nFILES_CREATED: tests/test_unit.py", 0.1, "gpt-4")
-        if label == 'step9':
-            return (True, "Generated E2E test\nE2E_FILES_CREATED: tests/e2e/test_e2e_bug.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-    assert "tests/test_unit.py" in files
-    assert "tests/e2e/test_e2e_bug.py" in files
-
-
-def test_state_save_after_each_step(mock_dependencies, default_args, tmp_path):
-    """Test that state is saved after each step completes."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Run only 2 steps then fail on step 3
-    call_count = [0]
-    def side_effect_run(*args, **kwargs):
-        call_count[0] += 1
-        label = kwargs.get('label', '')
-        if label == 'step3':
-            # Return "Needs More Info" to trigger hard stop
-            return (True, "Needs More Info", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    # Should have stopped at step 3
-    assert success is False
-    assert "Step 3" in msg
-
-    # State file should exist with last_completed_step = 2 (hard stop returns BEFORE saving)
-    state_dir = _get_state_dir(tmp_path)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-    assert state_file.exists(), f"State file not found at {state_file}"
-    with open(state_file) as f:
-        state = json.load(f)
-    assert state is not None
-    assert state["last_completed_step"] == 2  # Hard stop at step 3 returns before saving step 3
-    assert "1" in state["step_outputs"]
-    assert "2" in state["step_outputs"]
-
-
-def test_resume_skips_completed_steps(mock_dependencies, default_args, tmp_path):
-    """Test that resuming from step 5 skips steps 1-4."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create state file with last_completed_step=4 using new naming convention
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "issue_url": default_args["issue_url"],
-        "last_completed_step": 4,
-        "step_outputs": {
-            "1": "Step 1 output",
-            "2": "Step 2 output",
-            "3": "Step 3 output",
-            "4": "Step 4 output",
-        },
-        "total_cost": 0.4,
-        "model_used": "gpt-4",
-        "changed_files": [],
-        "worktree_path": None,
+    step_costs = {
+        "step1": 0.01,
+        "step2": 0.02,
+        "step3": 0.03,
+        "step4": 0.04,
+        "step5": 0.05,
+        "step5_5": 0.06,
+        "step6": 0.07,
+        "step7": 0.08,
+        "step8": 0.09,
+        "step9": 0.10,
+        "step10": 0.11,
     }
-    with open(state_file, "w") as f:
-        json.dump(state, f)
 
-    # Mock step 7 to return files
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        cost = step_costs.get(label, 0.0)
+        if label == "step7":
+            return (True, "FILES_CREATED: test.py", cost, "model")
+        return (True, "ok", cost, "model")
 
-    mock_run.side_effect = side_effect_run
+    mock_run.side_effect = side_effect
 
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+    success, msg, total_cost, model, files = run_agentic_bug_orchestrator(**default_args)
 
-    assert success is True
-
-    # Should only call steps 5, 5.5, 6-10 (7 steps), not 1-4
-    assert mock_run.call_count == 7
-
-    # Verify the labels of called steps
-    called_labels = [call.kwargs['label'] for call in mock_run.call_args_list]
-    assert 'step1' not in called_labels
-    assert 'step2' not in called_labels
-    assert 'step3' not in called_labels
-    assert 'step4' not in called_labels
-    assert 'step5' in called_labels
-    assert 'step5_5' in called_labels
-    assert 'step10' in called_labels
+    expected = sum(step_costs.values())
+    assert total_cost == pytest.approx(expected, abs=1e-9)
 
 
-def test_state_cleared_on_success(mock_dependencies, default_args, tmp_path):
-    """Test that state file is deleted on successful completion."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
+def test_model_used_reflects_last_executed_step(mock_dependencies, default_args):
+    """
+    Verify that model_used in the return tuple reflects the model string
+    returned by the final step (step 10).
+    """
+    mock_run, _, _ = mock_dependencies
 
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create initial state file using new naming convention
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "last_completed_step": 0,
-        "step_outputs": {},
-        "total_cost": 0.0,
-        "model_used": "unknown",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(state, f)
-
-    # Mock step 7 to return files
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        if label == 'step7':
-            return (True, "Generated test\nFILES_CREATED: test_file.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
-
-    mock_run.side_effect = side_effect_run
-
-    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
-
-    assert success is True
-
-    # State file should be deleted on success
-    assert not state_file.exists()
-
-
-def test_resume_from_partial_failure_state_reruns_failed_steps(mock_dependencies, default_args, tmp_path):
-    """When resuming from a state where steps 1-3 succeeded but 4-5.5 failed, the workflow should resume from step 4."""
-    import json
-    from pdd.agentic_bug_orchestrator import _get_state_dir
-
-    mock_run, mock_load, _ = mock_dependencies
-    default_args["cwd"] = tmp_path
-
-    # Create state where steps 1-3 succeeded, steps 4-5.5 failed,
-    # but last_completed_step is incorrectly set to 5.5 (ratchet effect)
-    state_dir = _get_state_dir(tmp_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
-
-    corrupted_state = {
-        "workflow": "bug",
-        "issue_number": default_args["issue_number"],
-        "issue_url": default_args["issue_url"],
-        "last_completed_step": 5.5,  # Ratcheted: should be 3
-        "step_outputs": {
-            "1": "No duplicates found",
-            "2": "Confirmed bug",
-            "3": "Sufficient info",
-            "4": "FAILED: All agent providers failed",
-            "5": "FAILED: All agent providers failed",
-            "5.5": "FAILED: All agent providers failed",
-        },
-        "total_cost": 0.3,
-        "model_used": "gpt-4",
-        "changed_files": [],
-        "worktree_path": None,
-    }
-    with open(state_file, "w") as f:
-        json.dump(corrupted_state, f)
-
-    # Track which steps are executed
-    executed_steps = []
-
-    def side_effect_run(*args, **kwargs):
-        label = kwargs.get('label', '')
-        executed_steps.append(label)
-        if label == 'step7':
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step10":
+            return (True, "PR created", 0.1, "claude-3-opus")
+        if label == "step7":
             return (True, "FILES_CREATED: test.py", 0.1, "gpt-4")
-        return (True, f"Output for {label}", 0.1, "gpt-4")
+        return (True, "ok", 0.1, "gpt-4")
 
-    mock_run.side_effect = side_effect_run
+    mock_run.side_effect = side_effect
+
+    success, msg, cost, model_used, files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is True
+    assert model_used == "claude-3-opus", (
+        f"model_used should be from step 10, got: {model_used}"
+    )
+
+
+def test_header_message_printed_with_issue_number_and_title(tmp_path):
+    """
+    Verify the 🔍 header message includes both the issue number and title.
+    """
+    with (
+        patch("pdd.agentic_bug_orchestrator.run_agentic_task") as mock_run,
+        patch("pdd.agentic_bug_orchestrator.load_prompt_template") as mock_load,
+        patch("pdd.agentic_bug_orchestrator.console") as mock_console,
+        patch("pdd.agentic_bug_orchestrator._setup_worktree") as mock_worktree,
+        patch("pdd.agentic_bug_orchestrator.load_workflow_state", return_value=(None, None)),
+        patch("pdd.agentic_bug_orchestrator.save_workflow_state", return_value=None),
+    ):
+        wt = tmp_path / ".pdd" / "worktrees" / "fix-issue-99"
+        wt.mkdir(parents=True, exist_ok=True)
+        mock_worktree.return_value = (wt, None)
+        mock_load.return_value = "Prompt for {issue_number}"
+
+        def side_effect(*args, **kwargs):
+            label = kwargs.get("label", "")
+            if label == "step7":
+                return (True, "FILES_CREATED: test.py", 0.1, "model")
+            return (True, "ok", 0.1, "model")
+
+        mock_run.side_effect = side_effect
+
+        run_agentic_bug_orchestrator(
+            issue_url="http://github.com/owner/repo/issues/99",
+            issue_content="Bug description",
+            repo_owner="owner",
+            repo_name="repo",
+            issue_number=99,
+            issue_author="alice",
+            issue_title="Crash when uploading large files",
+            cwd=tmp_path,
+            verbose=False,
+            quiet=False,  # Must be False to see the header
+        )
+
+    print_calls = [str(c) for c in mock_console.print.call_args_list]
+    header = next(
+        (c for c in print_calls if "99" in c and "Crash when uploading large files" in c),
+        None,
+    )
+    assert header is not None, (
+        f"Header with issue number 99 and title not found. Calls: {print_calls}"
+    )
+
+
+def test_use_github_state_false_propagated_to_save_and_load(default_args, tmp_path):
+    """
+    Verify that use_github_state=False is forwarded to load_workflow_state,
+    save_workflow_state, and clear_workflow_state.
+    """
+    default_args["cwd"] = tmp_path
+    default_args["use_github_state"] = False
+
+    saved_calls: list[bool] = []
+    loaded_calls: list[bool] = []
+    cleared_calls: list[bool] = []
+
+    def capture_save(
+        cwd,
+        issue_number,
+        workflow_type,
+        state,
+        state_dir,
+        repo_owner,
+        repo_name,
+        use_github_state: bool = True,
+        github_comment_id=None,
+    ) -> None:
+        """Capture the use_github_state value passed to save_workflow_state."""
+        saved_calls.append(use_github_state)
+
+    def capture_load(
+        cwd,
+        issue_number,
+        workflow_type,
+        state_dir,
+        repo_owner,
+        repo_name,
+        use_github_state: bool = True,
+    ) -> tuple:
+        """Capture the use_github_state value passed to load_workflow_state."""
+        loaded_calls.append(use_github_state)
+        return (None, None)
+
+    def capture_clear(
+        cwd,
+        issue_number,
+        workflow_type,
+        state_dir,
+        repo_owner,
+        repo_name,
+        use_github_state: bool = True,
+    ) -> None:
+        """Capture the use_github_state value passed to clear_workflow_state."""
+        cleared_calls.append(use_github_state)
+
+    with (
+        patch("pdd.agentic_bug_orchestrator.run_agentic_task") as mock_run,
+        patch("pdd.agentic_bug_orchestrator.load_prompt_template") as mock_load,
+        patch("pdd.agentic_bug_orchestrator.console"),
+        patch("pdd.agentic_bug_orchestrator._setup_worktree") as mock_worktree,
+        patch("pdd.agentic_bug_orchestrator.load_workflow_state", side_effect=capture_load),
+        patch("pdd.agentic_bug_orchestrator.save_workflow_state", side_effect=capture_save),
+        patch("pdd.agentic_bug_orchestrator.clear_workflow_state", side_effect=capture_clear),
+    ):
+        wt = tmp_path / ".pdd" / "worktrees" / "fix-issue-1"
+        wt.mkdir(parents=True, exist_ok=True)
+        mock_worktree.return_value = (wt, None)
+        mock_load.return_value = "Prompt for {issue_number}"
+
+        def side_effect(*args, **kwargs):
+            label = kwargs.get("label", "")
+            if label == "step7":
+                return (True, "FILES_CREATED: test.py", 0.1, "model")
+            return (True, "ok", 0.1, "model")
+
+        mock_run.side_effect = side_effect
+
+        run_agentic_bug_orchestrator(**default_args)
+
+    # load_workflow_state called with use_github_state=False
+    assert loaded_calls, "load_workflow_state should have been called"
+    assert all(v is False for v in loaded_calls), (
+        f"load_workflow_state always receives use_github_state=False: {loaded_calls}"
+    )
+
+    # Every save_workflow_state call uses use_github_state=False
+    assert saved_calls, "save_workflow_state should have been called at least once"
+    assert all(v is False for v in saved_calls), (
+        f"save_workflow_state always receives use_github_state=False: {saved_calls}"
+    )
+
+    # clear_workflow_state also uses use_github_state=False
+    assert cleared_calls, "clear_workflow_state should have been called on success"
+    assert all(v is False for v in cleared_calls), (
+        f"clear_workflow_state always receives use_github_state=False: {cleared_calls}"
+    )
+
+
+def test_step5_5_defect_type_code_does_not_stop_workflow(mock_dependencies, default_args):
+    """
+    Verify that 'DEFECT_TYPE: code' in step 5.5 output does NOT trigger any
+    hard stop — the workflow continues normally to step 6 and beyond.
+    """
+    mock_run, _, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step5_5":
+            return (True, "DEFECT_TYPE: code\nNo prompt issues found.", 0.1, "model")
+        if label == "step7":
+            return (True, "FILES_CREATED: test.py", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
 
     success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
 
-    # Step 4 should be re-executed because its cached output is FAILED
-    assert "step4" in executed_steps, (
-        f"Step 4 should be re-executed because its cached output is FAILED, "
-        f"but executed steps were: {executed_steps}. "
-        f"The blind resume skipped failed steps."
+    assert success is True
+    assert "Investigation complete" in msg
+    assert mock_run.call_count == 11
+
+    called_labels = [c.kwargs.get("label") for c in mock_run.call_args_list]
+    assert "step6" in called_labels, "Step 6 should run after DEFECT_TYPE: code"
+    assert "step10" in called_labels, "Step 10 should run after DEFECT_TYPE: code"
+
+
+def test_changed_files_restored_from_state_on_resume(default_args, tmp_path):
+    """
+    Verify that 'changed_files' stored in saved state is restored on resume
+    and included in the final return value.
+    """
+    default_args["cwd"] = tmp_path
+
+    state_dir = _get_state_dir(tmp_path)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / f"bug_state_{default_args['issue_number']}.json"
+
+    # Simulate a prior run that completed through step 9 with persisted changed_files
+    prior_state = {
+        "workflow": "bug",
+        "issue_number": default_args["issue_number"],
+        "issue_url": default_args["issue_url"],
+        "last_completed_step": 9,
+        "step_outputs": {
+            "1": "ok",
+            "2": "ok",
+            "3": "ok",
+            "4": "ok",
+            "5": "ok",
+            "5.5": "ok",
+            "6": "ok",
+            "7": "FILES_CREATED: tests/test_persisted.py",
+            "8": "ok",
+            "9": "E2E_FILES_CREATED: tests/e2e/test_e2e_persisted.py",
+        },
+        "total_cost": 0.9,
+        "model_used": "gpt-4",
+        "changed_files": ["tests/test_persisted.py", "tests/e2e/test_e2e_persisted.py"],
+        "worktree_path": None,
+    }
+    with open(state_file, "w") as f:
+        json.dump(prior_state, f)
+
+    with (
+        patch("pdd.agentic_bug_orchestrator.run_agentic_task") as mock_run,
+        patch("pdd.agentic_bug_orchestrator.load_prompt_template") as mock_load,
+        patch("pdd.agentic_bug_orchestrator.console"),
+        patch("pdd.agentic_bug_orchestrator._setup_worktree") as mock_worktree,
+        patch("pdd.agentic_bug_orchestrator.save_workflow_state", return_value=None),
+        patch("pdd.agentic_bug_orchestrator.clear_workflow_state"),
+    ):
+        wt = tmp_path / ".pdd" / "worktrees" / "fix-issue-1"
+        wt.mkdir(parents=True, exist_ok=True)
+        mock_worktree.return_value = (wt, None)
+        mock_load.return_value = "Prompt for {issue_number}"
+        mock_run.return_value = (True, "PR created", 0.1, "gpt-4")
+
+        success, msg, cost, model, changed_files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is True
+
+    # Previously accumulated files must appear in the final return
+    assert "tests/test_persisted.py" in changed_files, (
+        f"Persisted unit test file should be in changed_files: {changed_files}"
+    )
+    assert "tests/e2e/test_e2e_persisted.py" in changed_files, (
+        f"Persisted E2E file should be in changed_files: {changed_files}"
     )
 
-    # Steps 1-3 should NOT be re-executed (they succeeded)
-    assert "step1" not in executed_steps, "Step 1 succeeded and should not be re-run"
-    assert "step2" not in executed_steps, "Step 2 succeeded and should not be re-run"
-    assert "step3" not in executed_steps, "Step 3 succeeded and should not be re-run"
+    # Only step 10 should run (steps 1–9 were already cached in state)
+    assert mock_run.call_count == 1
 
-    # Steps 4, 5, 5.5, 6-10 should all be executed (8 steps)
-    assert mock_run.call_count == 8, (
-        f"Expected 8 steps (4, 5, 5.5, 6-10) but got {mock_run.call_count}: {executed_steps}"
+
+def test_step5_5_prompt_review_returns_reason_in_message(mock_dependencies, default_args):
+    """
+    Verify the hard-stop message for PROMPT_REVIEW: includes the extracted reason,
+    not just a generic string.
+    """
+    mock_run, _, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step5_5":
+            return (
+                True,
+                "PROMPT_REVIEW: Cannot determine if user intent is feature or defect",
+                0.1,
+                "model",
+            )
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is False
+    assert "Cannot determine if user intent is feature or defect" in msg, (
+        f"Hard-stop message should contain the extracted PROMPT_REVIEW reason: {msg}"
     )
+
+
+def test_step7_empty_files_list_after_comma_split_is_hard_stop(mock_dependencies, default_args):
+    """
+    Verify that a FILES_CREATED line with only whitespace/empty values after
+    splitting is treated as 'no files generated' and triggers the step 7 hard stop.
+    """
+    mock_run, _, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step7":
+            # Colon is present but content is only spaces/commas — effectively empty
+            return (True, "gen\nFILES_CREATED:  ,  ,  ", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is False
+    assert "Stopped at Step 7" in msg
+    assert files == []
+
+
+def test_multiple_e2e_files_all_end_up_in_changed_files(mock_dependencies, default_args):
+    """
+    Verify that multiple comma-separated E2E_FILES_CREATED paths are all
+    individually added to changed_files.
+    """
+    mock_run, _, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step7":
+            return (True, "FILES_CREATED: tests/test_unit.py", 0.1, "model")
+        if label == "step9":
+            return (
+                True,
+                "E2E_FILES_CREATED: tests/e2e/test_login.py, tests/e2e/test_signup.py",
+                0.1,
+                "model",
+            )
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    success, msg, cost, model, changed_files = run_agentic_bug_orchestrator(**default_args)
+
+    assert success is True
+    assert "tests/test_unit.py" in changed_files
+    assert "tests/e2e/test_login.py" in changed_files
+    assert "tests/e2e/test_signup.py" in changed_files
+
+
+# --- Complexity Scaling Tests (#495) ---
+
+
+def test_complexity_parsed_from_step5_simple(mock_dependencies, default_args):
+    """Step 5 outputs COMPLEXITY: simple → context['complexity'] is set to 'simple'."""
+    mock_run, mock_load, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step5":
+            return (True, "Root cause found\nCOMPLEXITY: simple\n", 0.1, "model")
+        if label == "step7":
+            return (True, "FILES_CREATED: test_file.py", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+    # Capture what the prompt template gets formatted with
+    formatted_prompts = []
+    original_return = "Prompt for {issue_number}"
+
+    def load_side_effect(name):
+        if "step6" in name:
+            return "Plan for {issue_number} complexity={complexity}"
+        if "step9" in name:
+            return "E2E for {issue_number} complexity={complexity}"
+        return original_return
+
+    mock_load.side_effect = load_side_effect
+
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+    assert success is True
+
+    # Verify step 6 was called with complexity=simple in the formatted prompt
+    calls = mock_run.call_args_list
+    step6_call = [c for c in calls if c[1].get("label") == "step6"][0]
+    instruction = step6_call[1]["instruction"]
+    assert "complexity=simple" in instruction
+
+
+def test_complexity_parsed_from_step5_complex(mock_dependencies, default_args):
+    """Step 5 outputs COMPLEXITY: complex → context['complexity'] is 'complex'."""
+    mock_run, mock_load, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step5":
+            return (True, "Root cause\nCOMPLEXITY: complex\nMore text", 0.1, "model")
+        if label == "step7":
+            return (True, "FILES_CREATED: test_file.py", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    def load_side_effect(name):
+        if "step6" in name:
+            return "Plan for {issue_number} complexity={complexity}"
+        return "Prompt for {issue_number}"
+
+    mock_load.side_effect = load_side_effect
+
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+    assert success is True
+
+    calls = mock_run.call_args_list
+    step6_call = [c for c in calls if c[1].get("label") == "step6"][0]
+    assert "complexity=complex" in step6_call[1]["instruction"]
+
+
+def test_complexity_defaults_to_complex_when_missing(mock_dependencies, default_args):
+    """If Step 5 output has no COMPLEXITY: marker, defaults to 'complex'."""
+    mock_run, mock_load, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step5":
+            return (True, "Root cause found, no complexity marker here", 0.1, "model")
+        if label == "step7":
+            return (True, "FILES_CREATED: test_file.py", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    def load_side_effect(name):
+        if "step6" in name:
+            return "Plan for {issue_number} complexity={complexity}"
+        return "Prompt for {issue_number}"
+
+    mock_load.side_effect = load_side_effect
+
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+    assert success is True
+
+    calls = mock_run.call_args_list
+    step6_call = [c for c in calls if c[1].get("label") == "step6"][0]
+    assert "complexity=complex" in step6_call[1]["instruction"]
+
+
+def test_e2e_skip_for_simple_bug(mock_dependencies, default_args):
+    """Step 9 outputs E2E_SKIP: → no E2E files added, workflow continues to step 10."""
+    mock_run, _, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step7":
+            return (True, "FILES_CREATED: test_file.py", 0.1, "model")
+        if label == "step9":
+            return (True, "E2E_SKIP: Simple bug — unit test sufficient", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    success, msg, cost, model, changed_files = run_agentic_bug_orchestrator(**default_args)
+    assert success is True
+    # Only unit test file, no E2E files
+    assert changed_files == ["test_file.py"]
+    # All 11 steps ran (including step 10 after the skip)
+    assert mock_run.call_count == 11
+
+
+def test_complexity_passed_to_step9(mock_dependencies, default_args):
+    """Complexity from Step 5 is passed to Step 9 prompt template."""
+    mock_run, mock_load, _ = mock_dependencies
+
+    def side_effect(*args, **kwargs):
+        label = kwargs.get("label", "")
+        if label == "step5":
+            return (True, "COMPLEXITY: medium", 0.1, "model")
+        if label == "step7":
+            return (True, "FILES_CREATED: test_file.py", 0.1, "model")
+        return (True, "ok", 0.1, "model")
+
+    mock_run.side_effect = side_effect
+
+    def load_side_effect(name):
+        if "step9" in name:
+            return "E2E for {issue_number} complexity={complexity}"
+        return "Prompt for {issue_number}"
+
+    mock_load.side_effect = load_side_effect
+
+    success, msg, cost, model, files = run_agentic_bug_orchestrator(**default_args)
+    assert success is True
+
+    calls = mock_run.call_args_list
+    step9_call = [c for c in calls if c[1].get("label") == "step9"][0]
+    assert "complexity=medium" in step9_call[1]["instruction"]

@@ -21,7 +21,8 @@ from .preprocess import preprocess
 # Initialize console
 console = Console()
 
-# Per-step timeouts for the 11-step agentic bug workflow
+# Per-step timeouts for the 11-step agentic bug workflow (Issue #256)
+# Complex steps (reproduce, root cause, prompt classification, generate, e2e) get more time.
 BUG_STEP_TIMEOUTS: Dict[Union[int, float], float] = {
     1: 240.0,    # Duplicate Check
     2: 400.0,    # Docs Check
@@ -68,6 +69,8 @@ def _worktree_exists(cwd: Path, worktree_path: Path) -> bool:
             text=True,
             check=True
         )
+        # The porcelain output lists 'worktree /path/to/worktree'
+        # We check if our specific path appears in the output
         return str(worktree_path.resolve()) in result.stdout
     except subprocess.CalledProcessError:
         return False
@@ -144,6 +147,7 @@ def _setup_worktree(cwd: Path, issue_number: int, quiet: bool, resume_existing: 
             if not success:
                 return None, f"Failed to remove existing worktree: {err}"
         else:
+            # It's just a directory, not a registered worktree
             if not quiet:
                 console.print(f"[yellow]Removing stale directory at {worktree_path}[/yellow]")
             shutil.rmtree(worktree_path)
@@ -153,9 +157,11 @@ def _setup_worktree(cwd: Path, issue_number: int, quiet: bool, resume_existing: 
 
     if branch_exists:
         if resume_existing:
+            # Keep existing branch with our accumulated work
             if not quiet:
                 console.print(f"[blue]Resuming with existing branch: {branch_name}[/blue]")
         else:
+            # Delete for fresh start
             if not quiet:
                 console.print(f"[yellow]Removing existing branch {branch_name}[/yellow]")
             success, err = _delete_branch(git_root, branch_name)
@@ -167,6 +173,7 @@ def _setup_worktree(cwd: Path, issue_number: int, quiet: bool, resume_existing: 
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
         if branch_exists and resume_existing:
+            # Checkout existing branch into new worktree
             subprocess.run(
                 ["git", "worktree", "add", str(worktree_path), branch_name],
                 cwd=git_root,
@@ -174,6 +181,7 @@ def _setup_worktree(cwd: Path, issue_number: int, quiet: bool, resume_existing: 
                 check=True
             )
         else:
+            # Create new branch from HEAD
             subprocess.run(
                 ["git", "worktree", "add", "-b", branch_name, str(worktree_path), "HEAD"],
                 cwd=git_root,
@@ -247,22 +255,30 @@ def run_agentic_bug_orchestrator(
         last_completed_step = state.get("last_completed_step", 0)
         cached_outputs = state.get("step_outputs", {})
 
-        # Validate cached state — find actual last successful step
+        # Issue #467: Validate cached state — find actual last successful step
+        # by scanning step_outputs for entries without "FAILED:" prefix.
+        # This prevents resuming past failed steps when the state was corrupted
+        # by the ratchet effect (now fixed) or by other state corruption.
         if cached_outputs:
+            # Step order for validation
             step_order = [1, 2, 3, 4, 5, 5.5, 6, 7, 8, 9, 10]
             actual_last_success: Union[int, float] = 0
             for sn in step_order:
                 output_val = cached_outputs.get(str(sn), "")
+                # Stop at the first missing/empty entry to avoid skipping gaps
                 if not output_val:
                     break
+                # Stop at the first explicitly failed step
                 if output_val.startswith("FAILED:"):
                     break
+                # Otherwise, count this step as successfully completed
                 actual_last_success = sn
             if actual_last_success < last_completed_step:
                 if not quiet:
                     console.print(f"[yellow]State validation: correcting last_completed_step from {last_completed_step} to {actual_last_success} (found FAILED steps in cache)[/yellow]")
                 last_completed_step = actual_last_success
 
+        # Calculate actual start step before printing resume message (handle step 5.5)
         if last_completed_step == 5:
             resume_start_step: Union[int, float] = 5.5
         elif last_completed_step == 5.5:
@@ -276,14 +292,16 @@ def run_agentic_bug_orchestrator(
         last_model_used = state.get("model_used", "unknown")
         step_outputs = state.get("step_outputs", {})
         changed_files = state.get("changed_files", [])
-        github_comment_id = loaded_gh_id
+        github_comment_id = loaded_gh_id  # Use the ID returned by load_workflow_state
 
+        # Restore worktree path
         wt_path_str = state.get("worktree_path")
         if wt_path_str:
             worktree_path = Path(wt_path_str)
             if worktree_path.exists():
                 current_cwd = worktree_path
             else:
+                # Recreate worktree with existing branch
                 wt_path, err = _setup_worktree(cwd, issue_number, quiet, resume_existing=True)
                 if err:
                     return False, f"Failed to recreate worktree on resume: {err}", total_cost, last_model_used, []
@@ -291,14 +309,30 @@ def run_agentic_bug_orchestrator(
                 current_cwd = worktree_path
             context["worktree_path"] = str(worktree_path)
 
+        # Restore context from step outputs
+        # Escape curly braces to prevent format string injection (Issue #393)
+        # Transform step keys: "5.5" -> "5_5" to match template placeholders (Issue #279)
         for step_key, output in step_outputs.items():
-            fixed_key = str(step_key).replace(".", "_")
-            escaped_output = output.replace("{", "{{").replace("}", "}}").replace("\n", "\\n")
+            fixed_key = str(step_key).replace(".", "_")  # "5.5" -> "5_5"
+            escaped_output = output.replace("{", "{{").replace("}", "}}")
             context[f"step{fixed_key}_output"] = escaped_output
 
+        # Restore complexity from cached Step 5 output
+        if "5" in step_outputs:
+            complexity = "complex"  # Default for backward compatibility
+            for line in step_outputs["5"].splitlines():
+                if line.strip().startswith("COMPLEXITY:"):
+                    value = line.split(":", 1)[1].strip().lower()
+                    if value in ("simple", "medium", "complex"):
+                        complexity = value
+                    break
+            context["complexity"] = complexity
+
+        # Restore files_to_stage if available
         if changed_files:
             context["files_to_stage"] = ", ".join(changed_files)
 
+    # Step Definitions (11 steps with 5.5 for prompt classification)
     steps: List[Tuple[Union[int, float], str, str]] = [
         (1, "duplicate", "Searching for duplicate issues"),
         (2, "docs", "Checking documentation for user error"),
@@ -313,6 +347,7 @@ def run_agentic_bug_orchestrator(
         (10, "pr", "Creating draft PR"),
     ]
 
+    # Determine correct start step (handle step 5.5)
     if last_completed_step == 5:
         start_step: Union[int, float] = 5.5
     elif last_completed_step == 5.5:
@@ -320,16 +355,24 @@ def run_agentic_bug_orchestrator(
     else:
         start_step = last_completed_step + 1
 
+    # Track the actual last successfully completed step for state saving.
+    # Issue #467: This prevents the "ratchet effect" where consecutive failures
+    # advance last_completed_step via the step_num - 1 formula.
     last_completed_step_to_save: Union[int, float] = last_completed_step
     consecutive_provider_failures = 0
 
     for step_num, name, description in steps:
 
+        # Skip already completed steps (resume support)
         if step_num < start_step:
             continue
 
+        # --- Pre-Step Logic: Worktree Creation ---
+        # Issue #352: Create worktree before Step 5.5 so prompt fixes are isolated
         if step_num == 5.5:
+            # Only create worktree if not already set (from resume)
             if worktree_path is None:
+                # Check current branch before creating worktree
                 try:
                     branch_res = subprocess.run(
                         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -342,6 +385,7 @@ def run_agentic_bug_orchestrator(
                     if current_branch not in ["main", "master"] and not quiet:
                         console.print(f"[yellow]Note: Creating branch from HEAD ({current_branch}), not origin/main. PR will include commits from this branch. Run from main for independent changes.[/yellow]")
                 except subprocess.CalledProcessError:
+                    # If we can't determine branch, proceed anyway (might be detached HEAD)
                     pass
 
                 wt_path, err = _setup_worktree(cwd, issue_number, quiet, resume_existing=False)
@@ -355,8 +399,10 @@ def run_agentic_bug_orchestrator(
                 if not quiet:
                     console.print(f"[blue]Working in worktree: {worktree_path}[/blue]")
 
+        # --- Step Execution ---
+        # Format step label for display and template name (5.5 -> "5.5" for display, "5_5" for template)
         step_display = f"{step_num}" if isinstance(step_num, int) else f"{step_num}"
-        step_suffix = str(step_num).replace(".", "_")
+        step_suffix = str(step_num).replace(".", "_")  # 5.5 -> "5_5"
 
         if not quiet:
             console.print(f"[bold][Step {step_display}/11][/bold] {description}...")
@@ -367,9 +413,12 @@ def run_agentic_bug_orchestrator(
         if not prompt_template:
             return False, f"Missing prompt template: {template_name}", total_cost, last_model_used, changed_files
 
+        # Preprocess to expand <include> tags and escape curly braces
+        # Exclude context keys from escaping so they can be substituted
         exclude_keys = list(context.keys())
         prompt_template = preprocess(prompt_template, recursive=True, double_curly_brackets=True, exclude_keys=exclude_keys)
 
+        # Format prompt with accumulated context
         try:
             formatted_prompt = prompt_template.format(**context)
         except KeyError as e:
@@ -378,6 +427,7 @@ def run_agentic_bug_orchestrator(
                 console.print(f"[red]Error: {msg}[/red]")
             return False, msg, total_cost, last_model_used, changed_files
 
+        # Run the task
         success, output, cost, model = run_agentic_task(
             instruction=formatted_prompt,
             cwd=current_cwd,
@@ -388,17 +438,24 @@ def run_agentic_bug_orchestrator(
             max_retries=DEFAULT_MAX_RETRIES,
         )
 
+        # Update tracking
         total_cost += cost
         last_model_used = model
-        escaped_output = output.replace("{", "{{").replace("}", "}}").replace("\n", "\\n")
+        # Escape curly braces in output to prevent format string injection (Issue #393)
+        # LLM outputs may contain {placeholders} that would cause KeyError in subsequent prompts
+        escaped_output = output.replace("{", "{{").replace("}", "}}")
         context[f"step{step_suffix}_output"] = escaped_output
 
+        # --- Post-Step Logic: Hard Stops & Parsing ---
+
+        # Step 1: Duplicate Check
         if step_num == 1 and "Duplicate of #" in output:
             msg = f"Stopped at Step 1: Issue is a duplicate. {output.strip()}"
             if not quiet:
                 console.print(f"⏹️  {msg}")
             return False, msg, total_cost, last_model_used, changed_files
 
+        # Step 2: User Error / Feature Request
         if step_num == 2:
             if "Feature Request (Not a Bug)" in output:
                 msg = "Stopped at Step 2: Identified as Feature Request."
@@ -409,12 +466,26 @@ def run_agentic_bug_orchestrator(
                 if not quiet: console.print(f"⏹️  {msg}")
                 return False, msg, total_cost, last_model_used, changed_files
 
+        # Step 3: Needs Info
         if step_num == 3 and "Needs More Info" in output:
             msg = "Stopped at Step 3: Insufficient information provided."
             if not quiet: console.print(f"⏹️  {msg}")
             return False, msg, total_cost, last_model_used, changed_files
 
+        # Step 5: Parse complexity classification for downstream test scaling
+        if step_num == 5:
+            complexity = "complex"  # Default for backward compatibility
+            for line in output.splitlines():
+                if line.strip().startswith("COMPLEXITY:"):
+                    value = line.split(":", 1)[1].strip().lower()
+                    if value in ("simple", "medium", "complex"):
+                        complexity = value
+                    break
+            context["complexity"] = complexity
+
+        # Step 5.5: Prompt Classification - Hard stop if needs human review
         if step_num == 5.5 and "PROMPT_REVIEW:" in output:
+            # Extract reason if available
             for line in output.splitlines():
                 if line.startswith("PROMPT_REVIEW:"):
                     reason = line.split(":", 1)[1].strip()
@@ -425,6 +496,7 @@ def run_agentic_bug_orchestrator(
             if not quiet: console.print(f"⏹️  {msg}")
             return False, msg, total_cost, last_model_used, changed_files
 
+        # Step 5.5: Parse PROMPT_FIXED to track changed prompt files
         if step_num == 5.5:
             for line in output.splitlines():
                 if line.startswith("PROMPT_FIXED:"):
@@ -434,7 +506,9 @@ def run_agentic_bug_orchestrator(
                         context["files_to_stage"] = ", ".join(changed_files)
                     break
 
+        # Step 7: File Extraction
         if step_num == 7:
+            # Parse output for FILES_CREATED or FILES_MODIFIED
             extracted_files = []
             for line in output.splitlines():
                 if line.startswith("FILES_CREATED:") or line.startswith("FILES_MODIFIED:"):
@@ -442,7 +516,9 @@ def run_agentic_bug_orchestrator(
                     extracted_files.extend([f.strip() for f in file_list.split(",") if f.strip()])
             
             changed_files.extend(extracted_files)
+            # Deduplicate while preserving insertion order for consistent git staging
             changed_files = list(dict.fromkeys(changed_files))
+            # Pass explicit file list to Step 9 and 10 for precise git staging
             context["files_to_stage"] = ", ".join(changed_files)
 
             if not changed_files:
@@ -450,38 +526,61 @@ def run_agentic_bug_orchestrator(
                 if not quiet: console.print(f"⏹️  {msg}")
                 return False, msg, total_cost, last_model_used, changed_files
 
+        # Step 8: Verification Failure
         if step_num == 8 and "FAIL: Test does not work as expected" in output:
             msg = "Stopped at Step 8: Generated test does not fail correctly (verification failed)."
             if not quiet: console.print(f"⏹️  {msg}")
             return False, msg, total_cost, last_model_used, changed_files
 
+        # Step 9: E2E Test — handle skip, failure, and file extraction
         if step_num == 9:
-            if "E2E_FAIL: Test does not catch bug correctly" in output:
+            if "E2E_SKIP:" in output:
+                # Simple bug — no E2E needed, treat as successful completion
+                if not quiet:
+                    for line in output.splitlines():
+                        if line.strip().startswith("E2E_SKIP:"):
+                            reason = line.split(":", 1)[1].strip()
+                            console.print(f"  → E2E test skipped: {reason}")
+                            break
+                # Skip E2E file parsing, continue to step 10
+            elif "E2E_FAIL: Test does not catch bug correctly" in output:
                 msg = "Stopped at Step 9: E2E test does not catch bug correctly."
                 if not quiet: console.print(f"⏹️  {msg}")
                 return False, msg, total_cost, last_model_used, changed_files
-            
-            e2e_files = []
-            for line in output.splitlines():
-                if line.startswith("E2E_FILES_CREATED:"):
-                    file_list = line.split(":", 1)[1].strip()
-                    e2e_files.extend([f.strip() for f in file_list.split(",") if f.strip()])
-            
-            if e2e_files:
-                changed_files.extend(e2e_files)
-                context["files_to_stage"] = ", ".join(changed_files)
+            else:
+                # Parse output for E2E_FILES_CREATED to extend changed_files
+                e2e_files = []
+                for line in output.splitlines():
+                    if line.startswith("E2E_FILES_CREATED:"):
+                        file_list = line.split(":", 1)[1].strip()
+                        e2e_files.extend([f.strip() for f in file_list.split(",") if f.strip()])
 
+                if e2e_files:
+                    changed_files.extend(e2e_files)
+                    # Update files_to_stage so Step 10 (PR) includes E2E files
+                    context["files_to_stage"] = ", ".join(changed_files)
+
+        # Soft Failure Logging (if not a hard stop)
         if not success and not quiet:
             console.print(f"[yellow]Warning: Step {step_num} reported failure, but proceeding as no hard stop condition met.[/yellow]")
         elif not quiet:
+            # Extract a brief result for display if possible, otherwise generic
             console.print(f"  → Step {step_num} complete.")
 
+        # Save state after each step (for resume support)
+        # Only mark step completed if it succeeded; failed steps get "FAILED:" prefix
+        # and last_completed_step_to_save stays unchanged (ensures resume re-runs failed step)
+        # Issue #467: On failure, keep last_completed_step_to_save at its current value
+        # instead of setting to step_num - 1, which caused a "ratchet effect" where
+        # consecutive failures advanced the cursor through failed steps.
         if success:
             step_outputs[str(step_num)] = output
             last_completed_step_to_save = step_num
             consecutive_provider_failures = 0
         else:
             step_outputs[str(step_num)] = f"FAILED: {output}"
+            # last_completed_step_to_save remains unchanged (no ratchet)
+            # Track consecutive provider failures for early abort
             if "All agent providers failed" in output:
                 consecutive_provider_failures += 1
                 if consecutive_provider_failures >= 3:
@@ -512,33 +611,30 @@ def run_agentic_bug_orchestrator(
             "issue_number": issue_number,
             "issue_url": issue_url,
             "last_completed_step": last_completed_step_to_save,
-            "step_outputs": step_outputs.copy(),
+            "step_outputs": step_outputs.copy(),  # Copy to avoid shared reference
             "total_cost": total_cost,
             "model_used": last_model_used,
-            "changed_files": changed_files.copy(),
+            "changed_files": changed_files.copy(),  # Copy to avoid shared reference
             "worktree_path": str(worktree_path) if worktree_path else None,
             "github_comment_id": github_comment_id
         }
         
-        # Retry logic for state saving
-        for attempt in range(3):
-            try:
-                github_comment_id = save_workflow_state(
-                    cwd=cwd,
-                    issue_number=issue_number,
-                    workflow_type="bug",
-                    state=new_state,
-                    state_dir=state_dir,
-                    repo_owner=repo_owner,
-                    repo_name=repo_name,
-                    use_github_state=use_github_state,
-                    github_comment_id=github_comment_id
-                )
-                break
-            except Exception as e:
-                if attempt == 2:
-                    console.print(f"[red]Error: Failed to sync state to GitHub after 3 attempts: {e}[/red]")
+        # Save to GitHub (primary) and local (cache)
+        # The function returns the comment ID (new or updated) to track for future updates
+        github_comment_id = save_workflow_state(
+            cwd=cwd,
+            issue_number=issue_number,
+            workflow_type="bug",
+            state=new_state,
+            state_dir=state_dir,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            use_github_state=use_github_state,
+            github_comment_id=github_comment_id
+        )
 
+    # --- Final Summary ---
+    # Clear state file on successful completion
     clear_workflow_state(
         cwd=cwd,
         issue_number=issue_number,
@@ -560,4 +656,5 @@ def run_agentic_bug_orchestrator(
     return True, final_msg, total_cost, last_model_used, changed_files
 
 if __name__ == "__main__":
+    # Example usage logic could go here if needed for testing
     pass
