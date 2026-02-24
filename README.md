@@ -2824,7 +2824,6 @@ PDD provides informative error messages when issues occur during command executi
 - AI model-related errors (e.g., API failures)
 - Prompt exceeding model context window — PDD validates prompt token count before sending to the LLM. If the prompt exceeds the model's context limit, PDD reports the token count, the model's limit, usage percentage, and which prompt caused the overflow. When multiple candidate models are configured, PDD automatically falls back to the next model.
 - Syntax errors in generated code
-- Prompt exceeding model context window (token count, model limit, and usage percentage are reported)
 
 When an error occurs, PDD will display a message describing the issue and, when possible, suggest steps to resolve it.
 
@@ -2874,10 +2873,12 @@ Here are some common issues and their solutions:
    - If persistent, check PDD Cloud status page
 
 8. **Context Window Overflow**: If you see "Prompt exceeds context limit" errors:
+   - PDD reports the token count, model limit, and usage percentage — use this info to reduce prompt size
    - Reduce the size of your prompt files or split into smaller modules
-   - Remove unnecessary `<include>` directives to reduce total prompt size
+   - Remove unnecessary `<include>` directives or use targeted excerpts instead of full files
    - Use a model with a larger context window (e.g., Gemini or Claude 4 with 1M tokens)
    - Run with `--verbose` to see exact token counts and context usage percentages
+   - If using `auto-deps`, review included dependencies for unnecessary bulk
 
 9. **Sync-Specific Issues**:
    - **"Another sync is running"**: Check for stale locks in `.pdd/locks/` directory and remove if process no longer exists
@@ -2885,13 +2886,6 @@ Here are some common issues and their solutions:
    - **State corruption or unexpected behavior**: Delete `.pdd/meta/{basename}_{language}.json` to reset fingerprint state
    - **Animation display issues**: Sync operations work in background; animation is visual feedback only and doesn't affect functionality
    - **Fingerprint mismatches**: Use `pdd sync --dry-run basename` to see what changes were detected and why operations were recommended
-
-9. **Context Window Exceeded**:
-   - PDD reports the token count, model limit, and usage percentage — use this info to reduce prompt size
-   - Split large prompts into smaller modules (one prompt per file)
-   - Use `<include>` with targeted excerpts instead of full files
-   - Use `pdd --verbose` to see token counts for all LLM calls, helping identify oversized prompts
-   - If using `auto-deps`, review included dependencies for unnecessary bulk
 
 If you encounter persistent issues, consult the PDD documentation or post an issue on GitHub for assistance.
 
