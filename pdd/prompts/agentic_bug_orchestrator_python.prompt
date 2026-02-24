@@ -1,26 +1,42 @@
-<pdd-reason>Orchestrates the 11-step agentic bug investigation workflow with complexity-aware test scaling.</pdd-reason>
+% You are an expert Python engineer. Your goal is to write a Python function, "run_agentic_bug_orchestrator", that orchestrates the 11-step agentic bug investigation workflow with complexity-aware test scaling.
 
-<pdd-interface>
-{{
-  "type": "module",
-  "module": {{
-    "functions": [
-      {{"name": "run_agentic_bug_orchestrator", "signature": "(issue_url, issue_content, repo_owner, repo_name, issue_number, issue_author, issue_title, *, cwd, verbose, quiet, timeout_adder, use_github_state)", "returns": "Tuple[bool, str, float, str, List[str]]"}}
-    ]
-  }}
-}}
-</pdd-interface>
+% You are an expert Python engineer.
 
-<pdd-dependency>agentic_common_python.prompt</pdd-dependency>
-<pdd-dependency>load_prompt_template_python.prompt</pdd-dependency>
+% Code Style Requirements
+- File must start with `from __future__ import annotations`.
+- All functions must be fully type-hinted.
+- Use `rich.console.Console` for all printing.
 
-<include>context/python_preamble.prompt</include>
+% Package Structure
+- The function should be part of a Python package, using relative imports (single dot) for internal modules (e.g. 'from .module_name import module_name').
+- The ./pdd/__init__.py file will have the EXTRACTION_STRENGTH, DEFAULT_STRENGTH, DEFAULT_TIME and other global constants. Example: ```from . import DEFAULT_STRENGTH```
+
+% Error Handling
+- Ensure the function handles edge cases, such as missing inputs or model errors, and provide clear error messages.
+
+% Here are the inputs and outputs of the function:
+    Inputs: 
+        'issue_url' - The URL of the issue being investigated.
+        'issue_content' - The content of the issue.
+        'repo_owner' - The owner of the repository.
+        'repo_name' - The name of the repository.
+        'issue_number' - The number of the issue.
+        'issue_author' - The author of the issue.
+        'issue_title' - The title of the issue.
+        'cwd' - The current working directory.
+        'verbose' - A boolean indicating whether to print detailed processing information. Default is False.
+        'quiet' - A boolean indicating whether to suppress output. Default is False.
+        'timeout_adder' - A float to add to the timeout for each step. Default is 0.0.
+        'use_github_state' - A boolean indicating whether to use GitHub state for persistence. Default is True.
+    Outputs:
+        'success' - A boolean indicating if the orchestration was successful.
+        'final_message' - A string containing the final message after orchestration.
+        'total_cost' - A float representing the total cost of running the function.
+        'model_used' - A string representing the model used for extraction.
+        'changed_files' - A list of strings representing the files that were changed.
 
 % Goal
 Write the `pdd/agentic_bug_orchestrator.py` module.
-
-% Role & Scope
-Orchestrator for the 11-step agentic bug investigation workflow. Runs each step as a separate agentic task, accumulates context between steps, and tracks overall progress and cost.
 
 % Requirements
 1. Function: `run_agentic_bug_orchestrator(issue_url: str, issue_content: str, repo_owner: str, repo_name: str, issue_number: int, issue_author: str, issue_title: str, *, cwd: Path, verbose: bool = False, quiet: bool = False, timeout_adder: float = 0.0, use_github_state: bool = True) -> Tuple[bool, str, float, str, List[str]]`
@@ -138,7 +154,7 @@ After Step 9, parse the output for `E2E_SKIP:`:
 - If output contains `E2E_SKIP:`, treat it as a **successful non-failure exit** (not a hard stop)
 - Do NOT parse for E2E_FILES_CREATED when E2E_SKIP is present (no E2E test was generated)
 - Continue to Step 10 normally — the unit test from Step 7 is sufficient
-- Log the skip reason: `"E2E test skipped: {reason}"`
+- Log the skip reason: "E2E test skipped: {reason}"
 
 % Git Worktree Isolation
 
@@ -245,7 +261,7 @@ To avoid re-running completed steps when the workflow is paused (e.g., needs mor
    - On start: Call `load_workflow_state()`, validate cached state, determine `start_step`
    - Track `github_comment_id` from load result for subsequent saves
    - **State validation on load**: After loading state, find the actual last *successfully* completed step by scanning `step_outputs` for entries that do NOT start with "FAILED:". Set `last_completed_step` to the highest step number whose output is not a FAILED entry (or 0 if all are failed). This prevents resuming past failed steps.
-   - If state exists: Print `"Resuming from step {start_step} (steps 1-{last_completed_step} cached)"`
+   - If state exists: Print "Resuming from step {start_step} (steps 1-{last_completed_step} cached)"
    - For steps < start_step: Use cached output from `state["step_outputs"]`
    - For steps >= start_step: Execute normally, call `save_workflow_state()` after each
      - On success: Store output in step_outputs, set `last_completed_step = step_num`
