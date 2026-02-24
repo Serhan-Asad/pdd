@@ -137,6 +137,22 @@ COMPLEXITY: [simple | medium | complex]
 *Proceeding to Step 5.5: Prompt Classification*
 ```
 
+% Final Output (REQUIRED)
+
+After posting the GitHub comment, you MUST output the following line as the VERY LAST LINE of your response. This is machine-parsed by the orchestrator — do not skip it, do not wrap it in markdown, do not put it only inside the GitHub comment:
+
+COMPLEXITY: simple
+
+or
+
+COMPLEXITY: medium
+
+or
+
+COMPLEXITY: complex
+
+Choose based on: `simple` = single function, obvious fix, ≤1 file; `medium` = logic error, 1-3 files; `complex` = multi-file, architectural. Default to `complex` if uncertain.
+
 % Important
 
 - Be specific about the exact location and nature of the bug
@@ -144,5 +160,4 @@ COMPLEXITY: [simple | medium | complex]
 - Search for existing patterns that solve analogous problems before recommending a fix approach
 - The fix location you recommend here directly determines which component pdd bug will create tests for — getting this wrong means tests will target the wrong code
 - If root cause is unclear, document what you learned and hypotheses
-- Always output the `COMPLEXITY:` line — downstream steps use it to scale test volume. When uncertain, default to `medium`
 - Always post your findings as a GitHub comment before completing

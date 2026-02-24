@@ -118,6 +118,6 @@ Your comment should follow this format:
 
 - Tests should be specific enough to catch this exact bug
 - Tests should not be so brittle they break with valid changes
-- Scale test depth to match the `{complexity}` classification — simple bugs need 1 test, not a full suite
+- Scale test depth to match the `{complexity}` classification — simple bugs need fewer tests (1-3), medium bugs need moderate coverage (3-5), complex bugs need a full suite. Use your judgement on the exact count.
 - Consider both the bug case and related edge cases (for medium and complex bugs)
 - Always post your findings as a GitHub comment before completing
