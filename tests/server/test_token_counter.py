@@ -52,10 +52,21 @@ def test_count_tokens_basic():
 @pytest.mark.parametrize("model_name, expected_limit", [
     ("gpt-4", 128000),
     ("gpt-4-turbo", 128000),  # Partial match
+    ("gpt-4o", 128000),
+    ("gpt-5-nano", 200000),
+    ("o3-mini", 200000),
     ("claude-3-opus", 200000),
-    ("claude-sonnet-4", 200000),
+    ("claude-sonnet-4", 1000000),
+    ("claude-sonnet-4-20250514", 1000000),
+    ("claude-opus-4", 1000000),
+    ("claude-haiku-4", 1000000),
+    ("anthropic.claude-opus-4-6-v1", 1000000),  # Bedrock model name
+    ("anthropic.claude-sonnet-4-20250514-v1", 1000000),  # Bedrock model name
     ("gemini-2-pro", 1000000),
-    ("unknown-model-xyz", 128000), # Default fallback
+    ("deepseek-chat", 128000),
+    ("llama-3.1-70b", 128000),
+    ("mistral-large", 128000),
+    ("unknown-model-xyz", 1000000), # Default fallback — permissive
 ])
 def test_get_context_limit_resolution(model_name, expected_limit):
     """Verify context limits are resolved correctly based on model name."""

@@ -98,6 +98,7 @@ def prompts_test_env():
 
     mock_token_counter = types.ModuleType("pdd.server.token_counter")
     mock_token_counter.get_token_metrics = MagicMock()
+    mock_token_counter.get_context_limit = MagicMock(return_value=128000)
     mock_token_counter.MODEL_CONTEXT_LIMITS = {
         "gpt-4": 128000,
         "claude": 200000,

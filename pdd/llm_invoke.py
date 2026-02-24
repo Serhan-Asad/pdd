@@ -120,6 +120,7 @@ import openai  # Import openai for exception handling as LiteLLM maps to its typ
 import warnings
 import time as time_module # Alias to avoid conflict with 'time' parameter
 from pdd.path_resolution import get_default_resolver
+from pdd.server.token_counter import count_tokens, get_context_limit
 
 # Opt-in to future pandas behavior regarding downcasting
 try:
@@ -2402,6 +2403,39 @@ def llm_invoke(
                                 pass
                         # Fall through to LiteLLM path as a fallback
 
+                # --- Context Window Validation ---
+                try:
+                    prompt_text = json.dumps(litellm_kwargs.get("messages", []))
+                    token_count = count_tokens(prompt_text)
+                    context_limit = get_context_limit(model_name_litellm)
+                    usage_pct = (token_count / context_limit) * 100 if context_limit > 0 else 0
+
+                    if token_count > context_limit:
+                        logger.error(
+                            f"[CONTEXT] Prompt ({token_count:,} tokens) exceeds {model_name_litellm} "
+                            f"context limit ({context_limit:,} tokens, {usage_pct:.1f}% usage). "
+                            f"Trying next model."
+                        )
+                        last_exception = RuntimeError(
+                            f"Prompt ({token_count:,} tokens) exceeds {model_name_litellm} "
+                            f"context limit ({context_limit:,} tokens)"
+                        )
+                        break  # try next candidate model
+
+                    if verbose and usage_pct > 90:
+                        logger.warning(
+                            f"[CONTEXT] Prompt is {usage_pct:.1f}% of {model_name_litellm} context "
+                            f"({token_count:,}/{context_limit:,} tokens)"
+                        )
+                    elif verbose:
+                        logger.info(
+                            f"[CONTEXT] Token count: {token_count:,}/{context_limit:,} "
+                            f"({usage_pct:.1f}%) for {model_name_litellm}"
+                        )
+                except Exception as ctx_err:
+                    if verbose:
+                        logger.debug(f"[CONTEXT] Token validation skipped: {ctx_err}")
+
                 if use_batch_mode:
                     if verbose:
                         logger.info(f"[INFO] Calling litellm.batch_completion for {model_name_litellm}...")
@@ -2968,6 +3002,11 @@ def llm_invoke(
     error_message = "All candidate models failed."
     if last_exception:
         error_message += f" Last error ({type(last_exception).__name__}): {last_exception}"
+    if last_exception and "context limit" in str(last_exception):
+        error_message += (
+            " Hint: Try reducing prompt size, splitting into smaller prompts, "
+            "or using a model with a larger context window."
+        )
     logger.error(f"[FATAL] {error_message}")
     raise RuntimeError(error_message) from last_exception
 

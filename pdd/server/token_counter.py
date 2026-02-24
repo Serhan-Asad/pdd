@@ -16,16 +16,32 @@ from typing import Optional, Dict
 import tiktoken
 
 # Default context limits by model family (tokens)
+# Order matters: more specific prefixes should come before broader ones
 MODEL_CONTEXT_LIMITS = {
+    # Claude 4.x — 1M effective context (beta header always added)
+    "claude-sonnet-4": 1000000,
+    "claude-opus-4": 1000000,
+    "claude-haiku-4": 1000000,
+    "anthropic.claude": 1000000,  # Bedrock model names (e.g. anthropic.claude-opus-4-6-v1)
+    # Claude 3.x
+    "claude-3": 200000,
+    # OpenAI
+    "gpt-4o": 128000,
     "gpt-4": 128000,
     "gpt-5": 200000,
-    "claude-3": 200000,
-    "claude-sonnet-4": 200000,
-    "claude-opus-4": 200000,
-    "claude-haiku-4": 200000,
+    "o1": 200000,
+    "o3": 200000,
+    "o4": 200000,
+    # Google
     "gemini-2": 1000000,
     "gemini-3": 1000000,
-    "default": 128000,
+    # Open-source / other providers
+    "deepseek": 128000,
+    "llama": 128000,
+    "mistral": 128000,
+    "qwen": 128000,
+    # Conservative default for unknown models — high enough to avoid false rejections
+    "default": 1000000,
 }
 
 # Tiktoken encodings - use cl100k_base for most modern models

@@ -79,6 +79,24 @@ def main():
     # Convert to dictionary for easy serialization/logging
     print(json.dumps(metrics.to_dict(), indent=2))
 
+    # 6. Claude 4 models now have 1M effective context (beta header always added)
+    print("\n--- Claude 4 Context Limits (1M tokens) ---")
+    for model in ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]:
+        limit = token_counter.get_context_limit(model)
+        print(f"  {model}: {limit:,} tokens")
+
+    # 7. Bedrock model name handling
+    # AWS Bedrock uses prefixed names like "anthropic.claude-opus-4-6-v1"
+    print("\n--- Bedrock Model Names ---")
+    bedrock_model = "anthropic.claude-opus-4-6-v1"
+    limit = token_counter.get_context_limit(bedrock_model)
+    print(f"  {bedrock_model}: {limit:,} tokens")
+
+    # 8. Unknown models get a permissive 1M default (avoids false rejections)
+    print("\n--- Unknown Model (permissive default) ---")
+    unknown_limit = token_counter.get_context_limit("some-custom-model-v2")
+    print(f"  some-custom-model-v2: {unknown_limit:,} tokens (default)")
+
     # Clean up dummy file (optional)
     # pricing_path.unlink()
 

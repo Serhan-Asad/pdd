@@ -25,7 +25,7 @@ except ImportError:
     console = Console()
 
 from ..security import PathValidator, SecurityError
-from ..token_counter import get_token_metrics
+from ..token_counter import get_token_metrics, get_context_limit
 from pdd.load_prompt_template import load_prompt_template
 
 
@@ -473,19 +473,8 @@ async def get_available_models():
     try:
         # Import here to avoid circular imports
         from pdd.llm_invoke import _load_model_data, LLM_MODEL_CSV_PATH, DEFAULT_BASE_MODEL
-        from ..token_counter import MODEL_CONTEXT_LIMITS
-
         # Load model data from CSV
         model_df = _load_model_data(LLM_MODEL_CSV_PATH)
-
-        # Helper to determine context limit for a model
-        def get_context_limit(model_name: str) -> int:
-            """Get context limit based on model name."""
-            model_lower = model_name.lower()
-            for prefix, limit in MODEL_CONTEXT_LIMITS.items():
-                if prefix in model_lower:
-                    return limit
-            return MODEL_CONTEXT_LIMITS.get("default", 128000)
 
         # Convert DataFrame to list of ModelInfo
         models = []
