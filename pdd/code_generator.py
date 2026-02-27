@@ -159,6 +159,16 @@ def code_generator(
             )
             total_cost += postprocess_cost
 
+        # Issue #625: Validate function call argument counts for Python code
+        if isinstance(language, str) and language.strip().lower() == 'python' and runnable_code:
+            arg_mismatches = _validate_python_function_args_inline(runnable_code, verbose)
+            if arg_mismatches:
+                console.print(
+                    "[bold yellow]Warning: Function argument mismatch detected in generated code. "
+                    "Returning empty result to prevent writing invalid code.[/bold yellow]"
+                )
+                return "", total_cost, model_name
+
         return runnable_code, total_cost, model_name
 
     except ValueError as ve:
@@ -169,3 +179,94 @@ def code_generator(
         if verbose:
             console.print(f"[bold red]Unexpected Error: {str(e)}[/bold red]")
         raise
+
+
+def _validate_python_function_args_inline(code: str, verbose: bool = False) -> list[dict]:
+    """
+    Validate that function calls in generated Python code match function definitions.
+
+    This is an inline version of _validate_python_function_args from sync_orchestration
+    that works on code strings rather than file paths. Used in the standalone
+    code_generator path to catch mismatches before returning.
+
+    Returns:
+        List of dicts describing mismatches (empty if none found).
+    """
+    import ast
+
+    if not code or not code.strip():
+        return []
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+
+    # Collect function definitions, skipping class methods
+    func_signatures: dict[str, dict] = {}
+
+    def _collect_functions(nodes, inside_class=False):
+        """Collect function definitions, skipping class methods."""
+        for node in nodes:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not inside_class:
+                    args = node.args
+                    num_params = len(args.args)
+                    num_defaults = len(args.defaults)
+                    has_vararg = args.vararg is not None
+
+                    min_params = num_params - num_defaults
+                    max_params = None if has_vararg else num_params
+
+                    func_signatures[node.name] = {
+                        'min_params': min_params,
+                        'max_params': max_params,
+                    }
+                _collect_functions(node.body, inside_class=False)
+            elif isinstance(node, ast.ClassDef):
+                _collect_functions(node.body, inside_class=True)
+
+    _collect_functions(tree.body)
+
+    if not func_signatures:
+        return []
+
+    mismatches: list[dict] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name):
+            continue
+
+        func_name = node.func.id
+        if func_name not in func_signatures:
+            continue
+
+        sig = func_signatures[func_name]
+        num_args = len(node.args)
+
+        if num_args < sig['min_params']:
+            mismatches.append({
+                'function': func_name,
+                'expected_min': sig['min_params'],
+                'expected_max': sig['max_params'],
+                'actual': num_args,
+                'line': node.lineno,
+            })
+        elif sig['max_params'] is not None and num_args > sig['max_params']:
+            mismatches.append({
+                'function': func_name,
+                'expected_min': sig['min_params'],
+                'expected_max': sig['max_params'],
+                'actual': num_args,
+                'line': node.lineno,
+            })
+
+    if mismatches:
+        for m in mismatches:
+            console.print(
+                f"[bold yellow]Warning: Function argument mismatch — {m['function']}() called with {m['actual']} args "
+                f"but expects {m['expected_min']}-{m['expected_max']} (line {m['line']})[/bold yellow]"
+            )
+
+    return mismatches
