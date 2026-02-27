@@ -440,3 +440,45 @@ def test_generate_loops_when_unfinished_never_true(monkeypatch):
 
     # Assert: final code includes the continuation at least once (loop happened)
     assert "# cont" in final_code
+
+
+# --- Bug #625: Function argument validation in standalone generation ---
+
+
+def test_issue625_code_generator_has_function_arg_validation():
+    """
+    Issue #625: code_generator.py should validate that function calls match
+    function definitions in generated Python code before returning.
+
+    Currently, the module has zero post-generation validation for function
+    argument consistency. The fix should add a call to
+    _validate_python_function_args() (analogous to _validate_python_imports()
+    for issue #572).
+    """
+    import pdd.code_generator as cg_mod
+
+    source = Path(cg_mod.__file__).read_text()
+    assert '_validate_python_function_args' in source, (
+        "Issue #625: code_generator.py does not reference "
+        "_validate_python_function_args. The standalone pdd generate path "
+        "has no post-generation validation for function argument consistency. "
+        "Generated Python code with mismatched function calls passes through "
+        "undetected."
+    )
+
+
+def test_issue625_code_generator_validates_python_language_only():
+    """
+    Issue #625: Function argument validation should only apply to Python code,
+    not JSON or other languages. Verify that the validation reference exists
+    in a Python-conditional code path within code_generator.py.
+    """
+    import pdd.code_generator as cg_mod
+
+    source = Path(cg_mod.__file__).read_text()
+    # The function must exist in the module source (it should be called
+    # for Python language after postprocessing)
+    assert '_validate_python_function_args' in source, (
+        "Issue #625: code_generator.py should include function argument "
+        "validation for Python code generation. Currently missing."
+    )

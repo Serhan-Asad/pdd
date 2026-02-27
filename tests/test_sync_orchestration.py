@@ -5473,3 +5473,120 @@ def test_test_extend_max_retries_with_adequate_coverage_succeeds(orchestration_f
         "Regression guard: test_extend followed by all_synced should succeed. "
         "Bug #573 fix must not break the case where test_extend improves coverage."
     )
+
+
+# --- Bug #625: Function call argument mismatch in generated code ---
+
+
+def test_issue625_wrong_arg_count_detected_after_agentic_generate(orchestration_fixture):
+    """
+    Issue #625: When code_generator_main produces Python code where a function
+    is called with wrong number of arguments (3 args to 4-param function),
+    post-generation validation must detect and report the mismatch.
+
+    This is analogous to issue #572's hallucinated import detection — a new
+    _validate_python_function_args() check should run after generation in
+    agentic mode.
+    """
+    import textwrap
+
+    mock_determine = orchestration_fixture['sync_determine_operation']
+    tmp_path = Path(orchestration_fixture['get_pdd_file_paths'].return_value['prompt']).parent.parent
+
+    # Code with the exact bug from issue #625: 3 args passed to 4-param function
+    buggy_code = textwrap.dedent('''\
+        """Hackathon compliance module."""
+        import requests
+        from typing import Dict
+
+        GITHUB_API_URL = "https://api.github.com"
+
+        def on_submission_created(repo_url: str, github_token: str) -> dict:
+            """Handle new submission."""
+            headers = {"Authorization": f"token {github_token}"}
+            readme_content = fetch_file_content(repo_url, 'README.md', github_token)
+            return {"readme": readme_content}
+
+        def fetch_file_content(owner: str, repo: str, path: str, headers: Dict[str, str]) -> str:
+            """Fetch file content from GitHub."""
+            url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}"
+            response = requests.get(url, headers=headers)
+            return response.text
+    ''')
+
+    def mock_generate(*args, **kwargs):
+        """Mock code_generator_main that writes code with wrong arg count."""
+        code_file = tmp_path / 'src' / 'calculator.py'
+        code_file.write_text(buggy_code, encoding='utf-8')
+        return {'success': True, 'cost': 0.05, 'model': 'mock-model'}
+
+    orchestration_fixture['code_generator_main'].side_effect = mock_generate
+
+    mock_determine.side_effect = [
+        SyncDecision(operation='auto-deps', reason='Dependencies need scanning'),
+        SyncDecision(operation='all_synced', reason='All done'),
+    ]
+
+    result = sync_orchestration(basename="calculator", language="python", agentic_mode=True)
+
+    # Post-generation validation should catch wrong arg count
+    assert result['success'] is False or len(result.get('errors', [])) > 0, (
+        "Function call with wrong argument count (3 args to 4-param function) "
+        "passed through undetected in agentic mode. Expected post-generation "
+        "function argument validation to catch the mismatch in "
+        "fetch_file_content(repo_url, 'README.md', github_token), but sync "
+        "reported success with no errors. (Issue #625)"
+    )
+
+
+def test_issue625_correct_function_calls_not_flagged(orchestration_fixture):
+    """
+    Regression guard for issue #625: When all function calls in generated code
+    match their definitions, function argument validation should NOT produce
+    false positives.
+    """
+    import textwrap
+
+    mock_determine = orchestration_fixture['sync_determine_operation']
+    tmp_path = Path(orchestration_fixture['get_pdd_file_paths'].return_value['prompt']).parent.parent
+
+    # Code where all function calls are correct
+    correct_code = textwrap.dedent('''\
+        """Hackathon compliance module."""
+        import requests
+        from typing import Dict
+
+        GITHUB_API_URL = "https://api.github.com"
+
+        def on_submission_created(repo_url: str, github_token: str) -> dict:
+            """Handle new submission."""
+            headers = {"Authorization": f"token {github_token}"}
+            owner, repo = repo_url.split("/")[-2:]
+            readme_content = fetch_file_content(owner, repo, 'README.md', headers)
+            return {"readme": readme_content}
+
+        def fetch_file_content(owner: str, repo: str, path: str, headers: Dict[str, str]) -> str:
+            """Fetch file content from GitHub."""
+            url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}"
+            response = requests.get(url, headers=headers)
+            return response.text
+    ''')
+
+    def mock_generate(*args, **kwargs):
+        """Mock code_generator_main that writes correct code."""
+        code_file = tmp_path / 'src' / 'calculator.py'
+        code_file.write_text(correct_code, encoding='utf-8')
+        return {'success': True, 'cost': 0.05, 'model': 'mock-model'}
+
+    orchestration_fixture['code_generator_main'].side_effect = mock_generate
+
+    mock_determine.side_effect = [
+        SyncDecision(operation='auto-deps', reason='Dependencies need scanning'),
+        SyncDecision(operation='all_synced', reason='All done'),
+    ]
+
+    result = sync_orchestration(basename="calculator", language="python", agentic_mode=True)
+
+    # Valid function calls should not trigger validation errors
+    assert result['success'] is True
+    assert not result.get('errors', [])
