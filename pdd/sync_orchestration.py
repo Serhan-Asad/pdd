@@ -731,6 +731,12 @@ def _validate_python_function_args(
                     num_params = len(args.args)
                     num_defaults = len(args.defaults)
                     has_vararg = args.vararg is not None
+                    has_kwonly = len(args.kwonlyargs) > 0
+
+                    # If function uses keyword-only params, skip — positional
+                    # count alone can't validate calls reliably.
+                    if has_kwonly:
+                        continue
 
                     min_params = num_params - num_defaults
                     max_params = None if has_vararg else num_params
@@ -765,24 +771,31 @@ def _validate_python_function_args(
             continue
 
         sig = func_signatures[func_name]
-        num_args = len(node.args)
+        num_positional = len(node.args)
+        num_keyword = len(node.keywords)
+        total_args = num_positional + num_keyword
+
+        # Skip validation when caller uses keyword args — we can't
+        # reliably map keyword names to positional slots via AST alone.
+        if num_keyword > 0:
+            continue
 
         # Too few args
-        if num_args < sig['min_params']:
+        if total_args < sig['min_params']:
             mismatches.append({
                 'function': func_name,
                 'expected_min': sig['min_params'],
                 'expected_max': sig['max_params'],
-                'actual': num_args,
+                'actual': total_args,
                 'line': node.lineno,
             })
         # Too many args (only if no *args)
-        elif sig['max_params'] is not None and num_args > sig['max_params']:
+        elif sig['max_params'] is not None and total_args > sig['max_params']:
             mismatches.append({
                 'function': func_name,
                 'expected_min': sig['min_params'],
                 'expected_max': sig['max_params'],
-                'actual': num_args,
+                'actual': total_args,
                 'line': node.lineno,
             })
 
@@ -1759,10 +1772,17 @@ def sync_orchestration(
                                         pdd_files['code'],
                                     )
                                     if arg_mismatches:
+                                        def _fmt_expected(m):
+                                            emin, emax = m['expected_min'], m['expected_max']
+                                            if emax is None:
+                                                return f"{emin}+"
+                                            if emin == emax:
+                                                return str(emin)
+                                            return f"{emin}-{emax}"
+
                                         mismatch_details = "; ".join(
                                             f"{m['function']}() called with {m['actual']} args "
-                                            f"but expects {m['expected_min']}"
-                                            f"{'' if m['expected_max'] is None else '-' + str(m['expected_max'])}"
+                                            f"but expects {_fmt_expected(m)}"
                                             f" (line {m['line']})"
                                             for m in arg_mismatches
                                         )

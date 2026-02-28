@@ -1,14 +1,14 @@
-"""Tests for function argument validation in generated code (issue #625).
+"""Tests for function argument count validation in generated code (issue #625).
 
 When pdd generates a Python file, function calls within that file should be
-consistent with function definitions in the same file. A new validation
-function _validate_python_function_args() should detect mismatches like:
-- Too few arguments passed to a function
-- Too many arguments passed to a function
-- Wrong argument order/types (detected via count mismatch)
+consistent with function definitions in the same file. The validation
+function _validate_python_function_args() detects positional argument count
+mismatches such as:
+- Too few positional arguments passed to a function
+- Too many positional arguments passed to a function (when no *args)
 
-These tests verify the validator catches such issues. They fail on the
-current (buggy) code because the validation function doesn't exist yet.
+Calls that use keyword arguments are skipped since positional count alone
+cannot reliably validate them.
 """
 
 import textwrap

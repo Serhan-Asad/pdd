@@ -5524,6 +5524,7 @@ def test_issue625_wrong_arg_count_detected_after_agentic_generate(orchestration_
 
     mock_determine.side_effect = [
         SyncDecision(operation='auto-deps', reason='Dependencies need scanning'),
+        SyncDecision(operation='generate', reason='Generate updated code'),
         SyncDecision(operation='all_synced', reason='All done'),
     ]
 
@@ -5582,6 +5583,7 @@ def test_issue625_correct_function_calls_not_flagged(orchestration_fixture):
 
     mock_determine.side_effect = [
         SyncDecision(operation='auto-deps', reason='Dependencies need scanning'),
+        SyncDecision(operation='generate', reason='Generate updated code'),
         SyncDecision(operation='all_synced', reason='All done'),
     ]
 

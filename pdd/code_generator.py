@@ -214,6 +214,12 @@ def _validate_python_function_args_inline(code: str, verbose: bool = False) -> l
                     num_params = len(args.args)
                     num_defaults = len(args.defaults)
                     has_vararg = args.vararg is not None
+                    has_kwonly = len(args.kwonlyargs) > 0
+
+                    # If function uses keyword-only params, skip — positional
+                    # count alone can't validate calls reliably.
+                    if has_kwonly:
+                        continue
 
                     min_params = num_params - num_defaults
                     max_params = None if has_vararg else num_params
@@ -243,30 +249,45 @@ def _validate_python_function_args_inline(code: str, verbose: bool = False) -> l
             continue
 
         sig = func_signatures[func_name]
-        num_args = len(node.args)
+        num_positional = len(node.args)
+        num_keyword = len(node.keywords)
+        total_args = num_positional + num_keyword
 
-        if num_args < sig['min_params']:
+        # Skip validation when caller uses keyword args — we can't
+        # reliably map keyword names to positional slots via AST alone.
+        if num_keyword > 0:
+            continue
+
+        if total_args < sig['min_params']:
             mismatches.append({
                 'function': func_name,
                 'expected_min': sig['min_params'],
                 'expected_max': sig['max_params'],
-                'actual': num_args,
+                'actual': total_args,
                 'line': node.lineno,
             })
-        elif sig['max_params'] is not None and num_args > sig['max_params']:
+        elif sig['max_params'] is not None and total_args > sig['max_params']:
             mismatches.append({
                 'function': func_name,
                 'expected_min': sig['min_params'],
                 'expected_max': sig['max_params'],
-                'actual': num_args,
+                'actual': total_args,
                 'line': node.lineno,
             })
 
-    if mismatches:
+    if mismatches and verbose:
         for m in mismatches:
+            expected_min = m['expected_min']
+            expected_max = m['expected_max']
+            if expected_max is None:
+                expected_str = f"{expected_min}+"
+            elif expected_min == expected_max:
+                expected_str = str(expected_min)
+            else:
+                expected_str = f"{expected_min}-{expected_max}"
             console.print(
                 f"[bold yellow]Warning: Function argument mismatch — {m['function']}() called with {m['actual']} args "
-                f"but expects {m['expected_min']}-{m['expected_max']} (line {m['line']})[/bold yellow]"
+                f"but expects {expected_str} (line {m['line']})[/bold yellow]"
             )
 
     return mismatches

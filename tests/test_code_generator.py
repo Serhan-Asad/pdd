@@ -445,40 +445,38 @@ def test_generate_loops_when_unfinished_never_true(monkeypatch):
 # --- Bug #625: Function argument validation in standalone generation ---
 
 
-def test_issue625_code_generator_has_function_arg_validation():
+def test_issue625_code_generator_rejects_mismatched_python():
     """
-    Issue #625: code_generator.py should validate that function calls match
-    function definitions in generated Python code before returning.
-
-    Currently, the module has zero post-generation validation for function
-    argument consistency. The fix should add a call to
-    _validate_python_function_args() (analogous to _validate_python_imports()
-    for issue #572).
+    Issue #625: code_generator.py should reject generated Python code that has
+    mismatched function call arguments (e.g., 3 args to a 4-param function).
+    The inline validator should return an empty result to prevent writing.
     """
-    import pdd.code_generator as cg_mod
+    from pdd.code_generator import _validate_python_function_args_inline
 
-    source = Path(cg_mod.__file__).read_text()
-    assert '_validate_python_function_args' in source, (
-        "Issue #625: code_generator.py does not reference "
-        "_validate_python_function_args. The standalone pdd generate path "
-        "has no post-generation validation for function argument consistency. "
-        "Generated Python code with mismatched function calls passes through "
-        "undetected."
+    buggy_code = (
+        "def fetch(owner, repo, path, headers):\n"
+        "    pass\n"
+        "\n"
+        "result = fetch('url', 'README.md', 'token')\n"
+    )
+    mismatches = _validate_python_function_args_inline(buggy_code)
+    assert len(mismatches) > 0, (
+        "Issue #625: _validate_python_function_args_inline should detect that "
+        "fetch() is called with 3 args but defined with 4 required params."
     )
 
 
 def test_issue625_code_generator_validates_python_language_only():
     """
-    Issue #625: Function argument validation should only apply to Python code,
-    not JSON or other languages. Verify that the validation reference exists
-    in a Python-conditional code path within code_generator.py.
+    Issue #625: Function argument validation should only apply to Python code.
+    Non-Python content (e.g., JSON) should not be rejected by the validator.
     """
-    import pdd.code_generator as cg_mod
+    from pdd.code_generator import _validate_python_function_args_inline
 
-    source = Path(cg_mod.__file__).read_text()
-    # The function must exist in the module source (it should be called
-    # for Python language after postprocessing)
-    assert '_validate_python_function_args' in source, (
-        "Issue #625: code_generator.py should include function argument "
-        "validation for Python code generation. Currently missing."
+    # Valid JSON that happens to look nothing like Python — should produce
+    # no mismatches (parser returns [] for non-parseable content).
+    json_content = '{"key": "value", "nested": {"a": 1}}'
+    mismatches = _validate_python_function_args_inline(json_content)
+    assert len(mismatches) == 0, (
+        "Issue #625: Non-Python content should not be flagged by the validator."
     )
