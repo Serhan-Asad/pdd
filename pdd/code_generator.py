@@ -231,6 +231,14 @@ def _validate_python_function_args_inline(code: str, verbose: bool = False) -> l
                 _collect_functions(node.body, inside_class=False)
             elif isinstance(node, ast.ClassDef):
                 _collect_functions(node.body, inside_class=True)
+            else:
+                for attr_name in ('body', 'orelse', 'finalbody'):
+                    child_body = getattr(node, attr_name, None)
+                    if isinstance(child_body, list):
+                        _collect_functions(child_body, inside_class)
+                for handler in getattr(node, 'handlers', []):
+                    if hasattr(handler, 'body'):
+                        _collect_functions(handler.body, inside_class)
 
     _collect_functions(tree.body)
 

@@ -710,7 +710,8 @@ def _validate_python_function_args(
 
     try:
         source = code_file.read_text(encoding='utf-8')
-    except Exception:
+    except (OSError, UnicodeDecodeError) as e:
+        logger.warning("Function arg validation skipped: cannot read %s: %s", code_file, e)
         return []
 
     try:
@@ -750,6 +751,15 @@ def _validate_python_function_args(
             elif isinstance(node, ast.ClassDef):
                 # Recurse into class body, marking methods
                 _collect_functions(node.body, inside_class=True)
+            else:
+                # Recurse into compound statements (try/except, if/else, with, for, etc.)
+                for attr_name in ('body', 'orelse', 'finalbody'):
+                    child_body = getattr(node, attr_name, None)
+                    if isinstance(child_body, list):
+                        _collect_functions(child_body, inside_class)
+                for handler in getattr(node, 'handlers', []):
+                    if hasattr(handler, 'body'):
+                        _collect_functions(handler.body, inside_class)
 
     _collect_functions(tree.body)
 

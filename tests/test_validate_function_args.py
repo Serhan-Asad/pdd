@@ -253,3 +253,133 @@ def test_syntax_error_handled_gracefully(tmp_path, validate_fn):
 
     issues = validate_fn(code_file)
     assert issues == [], "Syntax errors should be handled gracefully"
+
+
+def test_missing_file_handled_gracefully(tmp_path, validate_fn):
+    """Non-existent files should return empty list (not crash)."""
+    code_file = tmp_path / "does_not_exist.py"
+
+    issues = validate_fn(code_file)
+    assert issues == [], "Missing files should be handled gracefully"
+
+
+def test_function_inside_try_except(tmp_path, validate_fn):
+    """Functions defined inside try/except blocks should be collected."""
+    code = textwrap.dedent('''\
+        try:
+            def helper(x: int, y: int) -> int:
+                """Add two numbers."""
+                return x + y
+        except Exception:
+            pass
+
+        result = helper(1)
+    ''')
+    code_file = tmp_path / "test_code.py"
+    code_file.write_text(code)
+
+    issues = validate_fn(code_file)
+    assert len(issues) > 0, "Should detect 1 arg passed to 2-param function defined inside try block"
+
+
+def test_function_inside_if_else(tmp_path, validate_fn):
+    """Functions defined inside if/else blocks should be collected."""
+    code = textwrap.dedent('''\
+        import sys
+
+        if sys.platform == 'linux':
+            def connect(host: str, port: int) -> None:
+                """Connect to server."""
+                pass
+        else:
+            def connect(host: str, port: int) -> None:
+                """Connect to server."""
+                pass
+
+        connect()
+    ''')
+    code_file = tmp_path / "test_code.py"
+    code_file.write_text(code)
+
+    issues = validate_fn(code_file)
+    assert len(issues) > 0, "Should detect 0 args passed to 2-param function defined inside if/else"
+
+
+# --- Tests: _validate_python_function_args_inline (code_generator.py) ---
+
+
+@pytest.fixture
+def validate_inline_fn():
+    """Get the _validate_python_function_args_inline function."""
+    try:
+        from pdd.code_generator import _validate_python_function_args_inline
+        return _validate_python_function_args_inline
+    except ImportError:
+        pytest.fail(
+            "Issue #625: _validate_python_function_args_inline not found in "
+            "pdd.code_generator."
+        )
+
+
+def test_inline_detects_too_few_args(validate_inline_fn):
+    """Inline validator should detect too few args."""
+    code = textwrap.dedent('''\
+        def process(data: str, mode: str) -> str:
+            return f"{data}-{mode}"
+
+        result = process("hello")
+    ''')
+    issues = validate_inline_fn(code)
+    assert len(issues) > 0, "Inline validator should detect 1 arg passed to 2-param function"
+
+
+def test_inline_detects_too_many_args(validate_inline_fn):
+    """Inline validator should detect too many args."""
+    code = textwrap.dedent('''\
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        result = add(1, 2, 3)
+    ''')
+    issues = validate_inline_fn(code)
+    assert len(issues) > 0, "Inline validator should detect 3 args passed to 2-param function"
+
+
+def test_inline_correct_calls_not_flagged(validate_inline_fn):
+    """Inline validator should not flag correct calls."""
+    code = textwrap.dedent('''\
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        result = add(1, 2)
+    ''')
+    issues = validate_inline_fn(code)
+    assert len(issues) == 0, "Correct function calls should not be flagged"
+
+
+def test_inline_syntax_error_handled(validate_inline_fn):
+    """Inline validator should handle syntax errors gracefully."""
+    code = "def foo(:\n    pass\n"
+    issues = validate_inline_fn(code)
+    assert issues == [], "Syntax errors should return empty list"
+
+
+def test_inline_empty_code_handled(validate_inline_fn):
+    """Inline validator should handle empty/whitespace code."""
+    assert validate_inline_fn("") == []
+    assert validate_inline_fn("   ") == []
+
+
+def test_inline_function_inside_try_except(validate_inline_fn):
+    """Inline validator should find functions inside try/except."""
+    code = textwrap.dedent('''\
+        try:
+            def helper(x: int, y: int) -> int:
+                return x + y
+        except Exception:
+            pass
+
+        result = helper(1)
+    ''')
+    issues = validate_inline_fn(code)
+    assert len(issues) > 0, "Should detect 1 arg to 2-param function inside try block"
