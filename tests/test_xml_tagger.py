@@ -122,3 +122,48 @@ def test_failed_template_loading(monkeypatch):
     with pytest.raises(ValueError) as exc_info:
         xml_tagger("Test prompt", strength=0.7, temperature=0.8)
     assert "Failed to load prompt templates" in str(exc_info.value)
+
+
+# ── Tests for wrap_xml (issue #196) ──────────────────────────────────────────
+
+class TestWrapXml:
+    """Tests for the wrap_xml utility function.
+
+    Issue #196: wrap_xml produces duplicate closing tags when given empty content.
+    """
+
+    def test_empty_content_no_duplicate_closing_tag(self):
+        """Primary bug: empty content must produce <tag></tag>, not <tag></tag></tag>."""
+        from pdd.xml_tagger import wrap_xml
+        result = wrap_xml("test_tag", "")
+        assert result == "<test_tag></test_tag>", f"Got: {result}"
+
+    def test_non_empty_content_wrapping(self):
+        """Non-empty content should be wrapped correctly."""
+        from pdd.xml_tagger import wrap_xml
+        result = wrap_xml("section", "hello world")
+        assert result == "<section>hello world</section>"
+
+    def test_content_with_newlines(self):
+        """Content containing newlines should be preserved inside tags."""
+        from pdd.xml_tagger import wrap_xml
+        result = wrap_xml("block", "line1\nline2\nline3")
+        assert result == "<block>line1\nline2\nline3</block>"
+
+    def test_tag_with_special_characters(self):
+        """Tag names with underscores and hyphens should work."""
+        from pdd.xml_tagger import wrap_xml
+        assert wrap_xml("my_tag", "content") == "<my_tag>content</my_tag>"
+        assert wrap_xml("my-tag", "content") == "<my-tag>content</my-tag>"
+
+    def test_whitespace_only_content(self):
+        """Whitespace-only content should be wrapped, not treated as empty."""
+        from pdd.xml_tagger import wrap_xml
+        result = wrap_xml("tag", "   ")
+        assert result == "<tag>   </tag>"
+
+    def test_content_with_xml_characters(self):
+        """Content containing XML-like characters should be wrapped as-is."""
+        from pdd.xml_tagger import wrap_xml
+        result = wrap_xml("outer", "<inner>value</inner>")
+        assert result == "<outer><inner>value</inner></outer>"
