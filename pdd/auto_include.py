@@ -33,9 +33,9 @@ def _validate_input(input_prompt: str, directory_path: str, strength: float, tem
         raise ValueError("Input prompt cannot be empty")
     if not directory_path:
         raise ValueError("Invalid 'directory_path'.")
-    if not 0 <= strength <= 1:
+    if not 0 < strength <= 1:
         raise ValueError("Strength must be between 0 and 1")
-    if not 0 <= temperature <= 1:
+    if not 0 < temperature <= 1:
         raise ValueError("Temperature must be between 0 and 1")
 
 

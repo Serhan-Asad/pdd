@@ -41,7 +41,7 @@ def xml_tagger(
         # Input validation
         if not raw_prompt or not isinstance(raw_prompt, str):
             raise ValueError("raw_prompt must be a non-empty string")
-        if not 0 <= strength <= 1:
+        if not 0 < strength <= 1:
             raise ValueError("strength must be between 0 and 1")
         if not 0 <= temperature <= 1:
             raise ValueError("temperature must be between 0 and 1")
