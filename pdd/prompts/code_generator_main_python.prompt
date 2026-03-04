@@ -226,7 +226,8 @@
     - Implement a small helper, e.g., `expand_vars(text: str, vars: Dict[str, str]) -> str`, that performs a single-pass substitution for `$KEY` and `${KEY}` only when `KEY in vars`. Unmatched placeholders remain unchanged; do not read from OS environment in this function.
 
 % Template front‑matter & preprocessing requirements (Phase 2)
-    - Parse YAML front matter at the very beginning of the prompt file when present (leading `---\n` … `\n---`).
+    - Parse YAML front matter at the very beginning of the prompt file when present (leading `---` followed by a newline).
+      * Handle both `\n` (Unix) and `\r\n` (Windows/CRLF) line endings when detecting the opening `---` and closing `---` delimiters.
       * Return a dict (or empty) and the remaining prompt body with the front matter stripped.
       * Do NOT send the YAML to the LLM; treat it as human/CLI metadata.
     - Merge variable defaults from front matter into `env_vars` (without overwriting explicit `-e` values). Validate required variables; if missing, raise a friendly `click.UsageError` listing the missing keys.

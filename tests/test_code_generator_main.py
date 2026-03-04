@@ -2540,3 +2540,53 @@ def test_cloud_response_without_examples_used_key(
                         example_info_found = True
         assert cloud_success_found, f"Expected 'Cloud generation successful' in console output"
         assert not example_info_found, f"'Example:' should not appear when examplesUsed key is missing"
+
+
+# ---------------------------------------------------------------------------
+# Tests for _parse_front_matter CRLF handling (Issue #197)
+# ---------------------------------------------------------------------------
+from pdd.code_generator_main import _parse_front_matter
+
+
+class TestParseFrontMatterCRLF:
+    """Tests for _parse_front_matter handling of CRLF line endings (Issue #197)."""
+
+    def test_parse_front_matter_crlf(self):
+        """Front matter with Windows (CRLF) line endings should parse correctly."""
+        text = "---\r\nname: my_module\r\nlanguage: python\r\n---\r\nPrompt body here"
+        meta, body = _parse_front_matter(text)
+        assert meta is not None, "CRLF front matter returned None"
+        assert meta["name"] == "my_module"
+        assert meta["language"] == "python"
+        assert "Prompt body here" in body
+
+    def test_parse_front_matter_mixed_line_endings(self):
+        """Front matter with mixed LF/CRLF should still parse."""
+        text = "---\nname: mixed\r\n---\nBody content"
+        meta, body = _parse_front_matter(text)
+        assert meta is not None, "Mixed line ending front matter returned None"
+        assert meta["name"] == "mixed"
+        assert "Body content" in body
+
+    def test_parse_front_matter_crlf_delimiters_lf_inside(self):
+        """CRLF on delimiters but LF inside YAML content should parse."""
+        text = "---\r\nname: test\nlanguage: python\n---\r\nBody"
+        meta, body = _parse_front_matter(text)
+        assert meta is not None, "CRLF-delimiter front matter returned None"
+        assert meta["name"] == "test"
+        assert "Body" in body
+
+    def test_parse_front_matter_lf_still_works(self):
+        """Existing LF-only front matter must continue to work (regression guard)."""
+        text = "---\nname: lf_module\nlanguage: python\n---\nPrompt body"
+        meta, body = _parse_front_matter(text)
+        assert meta is not None, "LF front matter should still work"
+        assert meta["name"] == "lf_module"
+        assert "Prompt body" in body
+
+    def test_parse_front_matter_no_front_matter(self):
+        """Text without front matter should pass through unchanged."""
+        text = "Just a regular prompt with no front matter"
+        meta, body = _parse_front_matter(text)
+        assert meta is None
+        assert body == text
