@@ -1,3 +1,0 @@
-#!/bin/bash
-cd /tmp/pdd_job_Pqv9H3sGy5Bg1ZLLBYPw_rzac9a76
-pytest -x tests/test_agentic_change_orchestrator.py tests/test_issue_737_step_completion_markers.py::TestChangeOrchestratorStepMarkers tests/test_issue_737_step_completion_markers.py::TestStepMarkersSuppressedWhenQuiet::test_change_quiet_no_markers tests/test_issue_737_step_completion_markers.py::TestStepMarkerNotEmittedOnFailure -v 2>&1
