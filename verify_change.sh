@@ -1,0 +1,2 @@
+#!/bin/bash
+pytest -vv tests/test_issue_737_step_completion_markers.py::TestChangeOrchestratorStepMarkers tests/test_issue_737_step_completion_markers.py::TestStepMarkersSuppressedWhenQuiet tests/test_issue_737_step_completion_markers.py::TestStepMarkerNotEmittedOnFailure tests/test_agentic_change_orchestrator.py 2>&1
