@@ -43,7 +43,9 @@ def test_cli_handle_error_filenotfound(mock_main, mock_auto_update, create_dummy
     # Simulate FileNotFoundError
     mock_main.side_effect = FileNotFoundError("Input file missing")
 
-    # Patch handle_error to verify it's called with the right args
+    # Patch handle_error to verify it's called with the right args.
+    # Mocking handle_error at the call site avoids fragile Rich console
+    # patching that can break in headless Docker environments.
     with patch('pdd.commands.generate.handle_error') as mock_handle:
         result = CliRunner().invoke(cli.cli, ["generate", str(files["test.prompt"])])
 
@@ -55,6 +57,7 @@ def test_cli_handle_error_filenotfound(mock_main, mock_auto_update, create_dummy
     exc_arg = mock_handle.call_args[0][0]
     assert isinstance(exc_arg, FileNotFoundError)
     assert "Input file missing" in str(exc_arg)
+    assert mock_handle.call_args[0][1] == "generate"  # command_name
     mock_main.assert_called_once()
     mock_auto_update.assert_called_once_with()
 
@@ -70,12 +73,13 @@ def test_cli_handle_error_valueerror(mock_main, mock_auto_update, create_dummy_f
     with patch('pdd.commands.generate.handle_error') as mock_handle:
         result = CliRunner().invoke(cli.cli, ["generate", str(files["test.prompt"])])
 
-    assert result.exit_code == 0
-    assert result.exception is None
+    assert result.exit_code == 0  # Should be 0
+    assert result.exception is None  # Exception should be handled
     mock_handle.assert_called_once()
     exc_arg = mock_handle.call_args[0][0]
     assert isinstance(exc_arg, ValueError)
     assert "Invalid prompt content" in str(exc_arg)
+    assert mock_handle.call_args[0][1] == "generate"
     mock_main.assert_called_once()
 
 @patch('pdd.core.cli.auto_update')
@@ -90,12 +94,13 @@ def test_cli_handle_error_generic(mock_main, mock_auto_update, create_dummy_file
     with patch('pdd.commands.generate.handle_error') as mock_handle:
         result = CliRunner().invoke(cli.cli, ["generate", str(files["test.prompt"])])
 
-    assert result.exit_code == 0
-    assert result.exception is None
+    assert result.exit_code == 0  # Should be 0
+    assert result.exception is None  # Exception should be handled
     mock_handle.assert_called_once()
     exc_arg = mock_handle.call_args[0][0]
     assert isinstance(exc_arg, Exception)
     assert "Unexpected LLM issue" in str(exc_arg)
+    assert mock_handle.call_args[0][1] == "generate"
     mock_main.assert_called_once()
 
 @patch('pdd.core.errors.console', new_callable=MagicMock)
