@@ -530,9 +530,12 @@ def run_agentic_change_orchestrator(
         return True, f"PR already exists: {existing_pr}", 0.0, "unknown", []
 
     # Check for stale state: if issue was updated since state was saved, start fresh
+    # Exception: if the workflow is awaiting user feedback (stop condition was hit),
+    # the issue was updated by the bot's own clarification comment — resume anyway.
     if state is not None and issue_updated_at:
         stored_updated_at = state.get("issue_updated_at")
-        if stored_updated_at and stored_updated_at != issue_updated_at:
+        awaiting_feedback = state.get("awaiting_feedback", False)
+        if stored_updated_at and stored_updated_at != issue_updated_at and not awaiting_feedback:
             # Issue was modified - state is stale
             if not quiet:
                 console.print("[yellow]Issue was updated since last run - starting fresh[/yellow]")
@@ -552,6 +555,8 @@ def run_agentic_change_orchestrator(
         # Ensure issue_updated_at is in state for future staleness checks
         if issue_updated_at:
             state["issue_updated_at"] = issue_updated_at
+        # Clear awaiting_feedback flag on resume — we're now continuing
+        state.pop("awaiting_feedback", None)
 
         # Issue #467: Validate cached state — correct last_completed_step
         # if any cached step outputs have "FAILED:" prefix.
@@ -746,6 +751,7 @@ def run_agentic_change_orchestrator(
                     console.print(f"[yellow]Investigation stopped at Step {step_num}: {stop_reason}[/yellow]")
                 state["last_completed_step"] = step_num
                 state["step_outputs"][str(step_num)] = step_output
+                state["awaiting_feedback"] = True
                 save_workflow_state(cwd, issue_number, "change", state, state_dir, repo_owner, repo_name, use_github_state, github_comment_id)
                 return False, f"Stopped at step {step_num}: {stop_reason}", total_cost, model_used, []
             console.print(f"[yellow]Warning: Step {step_num} reported failure but continuing...[/yellow]")
@@ -756,6 +762,7 @@ def run_agentic_change_orchestrator(
                 console.print(f"[yellow]Investigation stopped at Step {step_num}: {stop_reason}[/yellow]")
             state["last_completed_step"] = step_num
             state["step_outputs"][str(step_num)] = step_output
+            state["awaiting_feedback"] = True
             save_workflow_state(cwd, issue_number, "change", state, state_dir, repo_owner, repo_name, use_github_state, github_comment_id)
             return False, f"Stopped at step {step_num}: {stop_reason}", total_cost, model_used, []
 

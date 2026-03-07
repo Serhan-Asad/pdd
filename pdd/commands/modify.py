@@ -176,6 +176,11 @@ def change(
                         click.echo(f"  - {f}")
             
             if not success:
+                # Stop conditions (e.g. "Clarification Needed") are intentional
+                # exits, not errors.  Exit 0 so the cloud executor does NOT
+                # retry with the next credential.
+                if message and message.startswith("Stopped at step"):
+                    raise click.exceptions.Exit(0)
                 raise click.exceptions.Exit(1)
 
             return message, cost, model

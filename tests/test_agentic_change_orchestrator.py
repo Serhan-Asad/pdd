@@ -2748,3 +2748,110 @@ def test_post_step_comment_called_on_provider_abort(mock_dependencies, temp_cwd)
     assert "Aborting" in msg
     # Comment posted once (on the 3rd consecutive failure)
     assert mock_post_comment.call_count == 1
+
+
+def test_awaiting_feedback_resumes_despite_updated_issue(mock_dependencies, temp_cwd):
+    """
+    When a stop condition was hit and awaiting_feedback=True is in the state,
+    the orchestrator should resume from saved state even if issue_updated_at
+    has changed (because the bot's own comment updated the issue timestamp).
+    """
+    mocks = mock_dependencies
+    mock_run = mocks["run"]
+    mock_load_state = mocks["load_state"]
+    mock_clear_state = mocks["clear_state"]
+
+    old_timestamp = "2024-01-01T10:00:00Z"
+    initial_state = {
+        "issue_number": 104,
+        "last_completed_step": 4,
+        "step_outputs": {
+            "1": "out1", "2": "out2", "3": "out3",
+            "4": "Clarification Needed"
+        },
+        "total_cost": 0.5,
+        "model_used": "claude",
+        "issue_updated_at": old_timestamp,
+        "awaiting_feedback": True,
+    }
+    mock_load_state.return_value = (initial_state, 12345)
+
+    def side_effect_run(**kwargs):
+        label = kwargs.get("label", "")
+        if label == "step9":
+            return (True, "FILES_CREATED: app.py", 0.5, "claude")
+        if label == "step10":
+            return (True, "Arch updated", 0.1, "claude")
+        if label.startswith("step11"):
+            return (True, "No Issues Found", 0.1, "claude")
+        if label == "step13":
+            return (True, "PR Created https://github.com/test/repo/pull/789", 0.1, "claude")
+        return (True, "ok", 0.1, "claude")
+
+    mock_run.side_effect = side_effect_run
+
+    # Call with DIFFERENT timestamp — without awaiting_feedback this would restart
+    new_timestamp = "2024-01-02T12:00:00Z"
+    success, msg, cost, _, _ = run_agentic_change_orchestrator(
+        issue_url="http://url",
+        issue_content="content with user feedback",
+        repo_owner="owner",
+        repo_name="repo",
+        issue_number=104,
+        issue_author="me",
+        issue_title="Feedback Resume Test",
+        issue_updated_at=new_timestamp,
+        cwd=temp_cwd,
+    )
+
+    assert success is True
+    # Steps 1-4 should NOT be called (resumed from step 5, not restarted)
+    labels_called = [call.kwargs.get("label") for call in mock_run.call_args_list]
+    assert "step1" not in labels_called, "Step 1 should be skipped on resume"
+    assert "step4" not in labels_called, "Step 4 should be skipped on resume"
+    assert "step5" in labels_called, "Step 5 should be called after resume"
+
+
+def test_stop_condition_saves_awaiting_feedback(mock_dependencies, temp_cwd):
+    """
+    When a hard stop condition is detected, the state should be saved with
+    awaiting_feedback=True so the next run can resume.
+    """
+    mocks = mock_dependencies
+    mock_run = mocks["run"]
+    mock_load_state = mocks["load_state"]
+    mock_save_state = mocks["save_state"]
+
+    mock_load_state.return_value = (None, None)
+
+    call_count = 0
+
+    def side_effect_run(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        label = kwargs.get("label", "")
+        if label == "step4":
+            return (True, "<pdd_stop_condition>Clarification Needed</pdd_stop_condition>", 0.1, "claude")
+        return (True, "ok", 0.1, "claude")
+
+    mock_run.side_effect = side_effect_run
+
+    success, msg, _, _, _ = run_agentic_change_orchestrator(
+        issue_url="http://url",
+        issue_content="vague issue",
+        repo_owner="owner",
+        repo_name="repo",
+        issue_number=200,
+        issue_author="me",
+        issue_title="Stop Test",
+        cwd=temp_cwd,
+    )
+
+    assert success is False
+    assert "Stopped at step 4" in msg
+
+    # Verify save_workflow_state was called with awaiting_feedback=True
+    assert mock_save_state.called
+    saved_state = mock_save_state.call_args[0][3]  # 4th positional arg is state dict
+    assert saved_state.get("awaiting_feedback") is True
+    assert saved_state.get("last_completed_step") == 4
