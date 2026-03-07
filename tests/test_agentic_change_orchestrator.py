@@ -478,7 +478,7 @@ def test_step7_prompt_has_stop_condition_marker():
     prompt_content = prompt_path.read_text()
 
     assert "% CRITICAL" in prompt_content, "Step 7 prompt missing CRITICAL section"
-    assert "STOP_CONDITION: Architectural decision needed" in prompt_content
+    assert "<pdd_stop_condition>" in prompt_content, "Step 7 prompt missing pdd_stop_condition XML tag"
 
 # -----------------------------------------------------------------------------
 # Scope Enforcement Tests (TDD for PDD Methodology)

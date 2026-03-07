@@ -136,6 +136,25 @@ ANTHROPIC_PRICING_BY_FAMILY = {
 console = Console()
 
 
+def extract_stop_condition(output: str) -> Optional[str]:
+    """Extract a stop condition from <pdd_stop_condition> XML tags in LLM output.
+
+    Returns the stop reason string (stripped, first-letter-capitalized),
+    or None if no tag is found.
+    """
+    match = re.search(
+        r"<pdd_stop_condition>(.*?)</pdd_stop_condition>",
+        output,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not match:
+        return None
+    reason = match.group(1).strip()
+    if not reason:
+        return None
+    return reason[0].upper() + reason[1:]
+
+
 # ---------------------------------------------------------------------------
 # Agentic Debug Logging
 # ---------------------------------------------------------------------------

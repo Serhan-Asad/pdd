@@ -179,13 +179,12 @@ Please reply with your preferred options (e.g., "1A, 2B"). Then run `pdd change 
 
 % CRITICAL: Output Format for Stop Condition
 
-If architectural decisions are needed, your final response MUST include this exact line:
+If architectural decisions are needed, your final response MUST include this exact XML tag:
 
-STOP_CONDITION: Architectural decision needed
+<pdd_stop_condition>Architectural Decision Needed</pdd_stop_condition>
 
-This line MUST:
+This tag MUST:
 - Appear in your final output (not just in the GitHub comment)
-- Use exact casing shown above (lowercase "decision needed")
 - Be on its own line for reliable parsing
 
-If NO architectural decisions are needed (proceeding to Step 8), do NOT include this line.
+If NO architectural decisions are needed (proceeding to Step 8), do NOT include this tag.

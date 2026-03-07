@@ -22,6 +22,7 @@ from .agentic_common import (
     clear_workflow_state,
     validate_cached_state,
     DEFAULT_MAX_RETRIES,
+    extract_stop_condition,
 )
 from .load_prompt_template import load_prompt_template
 
@@ -236,6 +237,17 @@ def _format_prompt(template: str, context: Dict[str, Any]) -> str:
 
 
 def _check_hard_stop(step_num: Union[int, float], output: str) -> Optional[str]:
+    """Check output for hard stop conditions.
+
+    Uses <pdd_stop_condition> XML tags as the primary detection mechanism,
+    with legacy string matching as a fallback for backward compatibility.
+    """
+    # Primary: check for explicit <pdd_stop_condition> tag
+    tag_reason = extract_stop_condition(output)
+    if tag_reason:
+        return tag_reason
+
+    # Fallback: legacy string matching
     if step_num == 1 and "Duplicate of #" in output:
         return "Issue is a duplicate"
     if step_num == 3 and "Needs More Info" in output:

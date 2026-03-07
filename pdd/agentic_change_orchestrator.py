@@ -24,6 +24,7 @@ from pdd.agentic_common import (
     validate_cached_state,
     DEFAULT_MAX_RETRIES,
     post_step_comment,
+    extract_stop_condition,
 )
 from pdd.load_prompt_template import load_prompt_template
 from pdd.sync_order import (
@@ -311,7 +312,17 @@ def _detect_worktree_changes(worktree_path: Path, direct_edit_candidates: Option
         return []
 
 def _check_hard_stop(step_num: int, output: str) -> Optional[str]:
-    """Check output for hard stop conditions."""
+    """Check output for hard stop conditions.
+
+    Uses <pdd_stop_condition> XML tags as the primary detection mechanism,
+    with legacy string matching as a fallback for backward compatibility.
+    """
+    # Primary: check for explicit <pdd_stop_condition> tag
+    tag_reason = extract_stop_condition(output)
+    if tag_reason:
+        return tag_reason
+
+    # Fallback: legacy string matching
     if step_num == 1 and "Duplicate of #" in output:
         return "Issue is a duplicate"
     if step_num == 2 and "Already Implemented" in output:
