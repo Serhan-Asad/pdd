@@ -387,11 +387,22 @@ def _check_hard_stop(step_num: int, output: str) -> Optional[str]:
     if step_num == 4:
         if stop_match and "clarification" in stop_match.group(1).lower():
             return "Clarification needed"
+        # Fallback: detect pause from structured status line when LLM omits STOP_CONDITION tag
+        if re.search(r'\*\*status:\*\*\s*clarification needed', output_lower):
+            return "Clarification needed"
+        if "workflow paused" in output_lower and "clarification" in output_lower:
+            return "Clarification needed"
         return None
     if step_num == 6 and "no dev units found" in output_lower:
         return "No dev units found"
     if step_num == 7:
         if stop_match and "architectural" in stop_match.group(1).lower():
+            return "Architectural decision needed"
+        # Fallback: detect pause from structured status line when LLM omits STOP_CONDITION tag.
+        # Match the exact status pattern from the Step 7 prompt template output format.
+        if re.search(r'\*\*status:\*\*\s*architectural decision needed', output_lower):
+            return "Architectural decision needed"
+        if "workflow paused" in output_lower and "architectural" in output_lower:
             return "Architectural decision needed"
         return None
     if step_num == 8 and "no changes required" in output_lower:

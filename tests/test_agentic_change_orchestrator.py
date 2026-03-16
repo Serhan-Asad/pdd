@@ -3059,6 +3059,73 @@ def test_check_hard_stop_step7_requires_stop_condition_tag():
 
 
 # -----------------------------------------------------------------------------
+# Bug #868: Step 7 hard stop fallback when LLM omits STOP_CONDITION tag
+# -----------------------------------------------------------------------------
+
+def test_check_hard_stop_step7_fallback_structured_status():
+    """Step 7 should stop when LLM output contains the structured status line
+    from the prompt template, even without STOP_CONDITION tag."""
+    from pdd.agentic_change_orchestrator import _check_hard_stop
+
+    output = (
+        "## Step 7: Architecture Review\n\n"
+        "**Status:** Architectural Decision Needed\n\n"
+        "### Questions for @user\n"
+        "1. Which approach?\n"
+    )
+    result = _check_hard_stop(7, output)
+    assert result == "Architectural decision needed", (
+        "Bug #868: _check_hard_stop should detect structured status line "
+        "'**Status:** Architectural Decision Needed' as a fallback"
+    )
+
+
+def test_check_hard_stop_step7_fallback_workflow_paused():
+    """Step 7 should stop when output contains 'workflow paused' + 'architectural'."""
+    from pdd.agentic_change_orchestrator import _check_hard_stop
+
+    output = (
+        "I've posted the comment.\n"
+        "*Workflow paused - awaiting architectural decisions from @user*"
+    )
+    result = _check_hard_stop(7, output)
+    assert result == "Architectural decision needed", (
+        "Bug #868: _check_hard_stop should detect 'workflow paused' + 'architectural'"
+    )
+
+
+def test_check_hard_stop_step7_casual_mention_no_trigger():
+    """Casual mention of 'architectural' without structured status should NOT trigger."""
+    from pdd.agentic_change_orchestrator import _check_hard_stop
+
+    result = _check_hard_stop(7, "Mentioning Architectural Decision Needed in passing.")
+    assert result is None, (
+        "_check_hard_stop should NOT trigger on casual mention without "
+        "structured status line or workflow paused marker"
+    )
+
+
+def test_check_hard_stop_step4_fallback_structured_status():
+    """Step 4 should stop on structured status line fallback."""
+    from pdd.agentic_change_orchestrator import _check_hard_stop
+
+    output = "## Step 4\n\n**Status:** Clarification Needed\n\nQuestions:\n1. What scope?"
+    result = _check_hard_stop(4, output)
+    assert result == "Clarification needed", (
+        "Bug #868: Step 4 should detect structured status line fallback"
+    )
+
+
+def test_check_hard_stop_step4_workflow_paused():
+    """Step 4 should stop on 'workflow paused' + 'clarification'."""
+    from pdd.agentic_change_orchestrator import _check_hard_stop
+
+    output = "*Workflow paused - awaiting clarification from @user*"
+    result = _check_hard_stop(4, output)
+    assert result == "Clarification needed"
+
+
+# -----------------------------------------------------------------------------
 # Bug #784: _check_hard_stop improvements
 # -----------------------------------------------------------------------------
 
