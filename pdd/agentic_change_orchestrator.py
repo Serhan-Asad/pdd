@@ -897,11 +897,12 @@ def run_agentic_change_orchestrator(
                 # Clarification steps save step_num - 1 so the step re-runs on resume
                 state["last_completed_step"] = step_num - 1 if step_num in _CLARIFICATION_STEPS else step_num
                 state["step_outputs"][str(step_num)] = step_output
-                # Refresh issue_updated_at after clarification (bot comment changes the timestamp)
+                # Clear issue_updated_at so the staleness check is skipped on resume.
+                # The user's reply comment will bump the timestamp, which would
+                # otherwise trigger a full restart — but that reply is the expected
+                # next action after a clarification pause, not a stale-state signal.
                 if step_num in _CLARIFICATION_STEPS:
-                    refreshed = _fetch_issue_updated_at(repo_owner, repo_name, issue_number)
-                    if refreshed:
-                        state["issue_updated_at"] = refreshed
+                    state.pop("issue_updated_at", None)
                 save_workflow_state(cwd, issue_number, "change", state, state_dir, repo_owner, repo_name, use_github_state, github_comment_id)
                 return False, f"Stopped at step {step_num}: {stop_reason}", total_cost, model_used, []
             console.print(f"[yellow]Warning: Step {step_num} reported failure but continuing...[/yellow]")
@@ -913,11 +914,12 @@ def run_agentic_change_orchestrator(
             # Clarification steps save step_num - 1 so the step re-runs on resume
             state["last_completed_step"] = step_num - 1 if step_num in _CLARIFICATION_STEPS else step_num
             state["step_outputs"][str(step_num)] = step_output
-            # Refresh issue_updated_at after clarification (bot comment changes the timestamp)
+            # Clear issue_updated_at so the staleness check is skipped on resume.
+            # The user's reply comment will bump the timestamp, which would
+            # otherwise trigger a full restart — but that reply is the expected
+            # next action after a clarification pause, not a stale-state signal.
             if step_num in _CLARIFICATION_STEPS:
-                refreshed = _fetch_issue_updated_at(repo_owner, repo_name, issue_number)
-                if refreshed:
-                    state["issue_updated_at"] = refreshed
+                state.pop("issue_updated_at", None)
             save_workflow_state(cwd, issue_number, "change", state, state_dir, repo_owner, repo_name, use_github_state, github_comment_id)
             return False, f"Stopped at step {step_num}: {stop_reason}", total_cost, model_used, []
 

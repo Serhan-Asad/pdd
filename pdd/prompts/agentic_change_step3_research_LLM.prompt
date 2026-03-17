@@ -97,25 +97,8 @@ Based on the research, here are clarified requirements:
 *Proceeding to Step 4: Documentation Changes*
 ```
 
-**If additional user input is needed (PAUSE workflow):**
-```markdown
-## Step 3: Research & Clarification
-
-**Status:** Additional Clarification Needed
-
-### Research Summary
-[What was researched and found]
-
-### Questions for Clarification
-1. [Specific question that needs user input]
-2. [Another question if applicable]
-
-### Why This Matters
-[Brief explanation of how the answer affects implementation]
-
----
-*Awaiting user response before proceeding.*
-```
+**If you identify questions or ambiguities during research:**
+Do NOT pause the workflow or ask the user directly. Instead, note the open questions in your "Refined Specifications" section and proceed. Step 4 (Requirements Clarity Check) will evaluate whether user input is needed and pause the workflow if so.
 
 % Important
 

@@ -3263,8 +3263,9 @@ def test_step4_clarification_saves_step_minus_one(mock_dependencies, temp_cwd):
     )
 
 
-def test_fetch_issue_updated_at_called_on_clarification(mock_dependencies, temp_cwd):
-    """Bug #784: issue_updated_at is refreshed after clarification stops."""
+def test_clarification_stop_clears_issue_updated_at(mock_dependencies, temp_cwd):
+    """Bug #868: Clarification stops should clear issue_updated_at from state
+    so the user's reply comment doesn't trigger a full restart."""
     mocks = mock_dependencies
     mock_run = mocks["run"]
 
@@ -3276,17 +3277,15 @@ def test_fetch_issue_updated_at_called_on_clarification(mock_dependencies, temp_
 
     mock_run.side_effect = side_effect
 
-    with patch("pdd.agentic_change_orchestrator._fetch_issue_updated_at",
-               return_value="2026-03-08T12:00:00Z") as mock_fetch:
-        success, msg, _, _, _ = run_agentic_change_orchestrator(
-            issue_url="http://url", issue_content="content", repo_owner="owner", repo_name="repo",
-            issue_number=784, issue_author="me", issue_title="title",
-            issue_updated_at="2026-03-08T10:00:00Z",
-            cwd=temp_cwd, verbose=False
-        )
-        assert success is False
-        mock_fetch.assert_called_once_with("owner", "repo", 784)
-        saved_state = mocks["save_state"].call_args[0][3]
-        assert saved_state["issue_updated_at"] == "2026-03-08T12:00:00Z", (
-            "Bug #784: issue_updated_at should be refreshed after clarification"
-        )
+    success, msg, _, _, _ = run_agentic_change_orchestrator(
+        issue_url="http://url", issue_content="content", repo_owner="owner", repo_name="repo",
+        issue_number=784, issue_author="me", issue_title="title",
+        issue_updated_at="2026-03-08T10:00:00Z",
+        cwd=temp_cwd, verbose=False
+    )
+    assert success is False
+    saved_state = mocks["save_state"].call_args[0][3]
+    assert "issue_updated_at" not in saved_state, (
+        "Bug #868: clarification stops should clear issue_updated_at "
+        "so the user's reply doesn't trigger a stale-state restart"
+    )
