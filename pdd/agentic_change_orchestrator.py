@@ -373,7 +373,12 @@ def _detect_worktree_changes(worktree_path: Path, direct_edit_candidates: Option
 def _check_hard_stop(step_num: int, output: str) -> Optional[str]:
     """Check output for hard stop conditions.
 
-    Clarification steps (4, 7) require the explicit STOP_CONDITION: tag.
+    Clarification steps (4, 7) prefer the explicit STOP_CONDITION: tag but
+    fall back to detecting the structured status line from the prompt template
+    (e.g. ``**Status:** Architectural Decision Needed``) or a
+    "workflow paused" + keyword marker.  This prevents infinite loops when the
+    LLM posts the correct GitHub comment but omits the STOP_CONDITION tag.
+
     Other steps use case-insensitive substring matching as a fallback.
     A universal STOP_CONDITION: tag is recognized on any step.
     """
@@ -389,11 +394,21 @@ def _check_hard_stop(step_num: int, output: str) -> Optional[str]:
     if step_num == 4:
         if stop_match and "clarification" in stop_match.group(1).lower():
             return "Clarification needed"
+        # Fallback: structured status line from prompt template output format
+        if re.search(r'\*\*status:\*\*\s*clarification needed', output_lower):
+            return "Clarification needed"
+        if "workflow paused" in output_lower and "clarification" in output_lower:
+            return "Clarification needed"
         return None
     if step_num == 6 and "no dev units found" in output_lower:
         return "No dev units found"
     if step_num == 7:
         if stop_match and "architectural" in stop_match.group(1).lower():
+            return "Architectural decision needed"
+        # Fallback: structured status line from prompt template output format
+        if re.search(r'\*\*status:\*\*\s*architectural decision needed', output_lower):
+            return "Architectural decision needed"
+        if "workflow paused" in output_lower and "architectural" in output_lower:
             return "Architectural decision needed"
         return None
     if step_num == 8 and "no changes required" in output_lower:
