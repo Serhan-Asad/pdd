@@ -1,11 +1,15 @@
 from pathlib import Path
 from typing import Optional
+import os
 from rich import print
 from pdd.path_resolution import get_default_resolver
 
 def print_formatted(message: str) -> None:
     """Print message with raw formatting tags for testing compatibility."""
     print(message)
+
+def _is_quiet_mode() -> bool:
+    return os.getenv("PDD_QUIET") == "1"
 
 def load_prompt_template(prompt_name: str) -> Optional[str]:
     """
@@ -47,7 +51,8 @@ def load_prompt_template(prompt_name: str) -> Optional[str]:
     try:
         with open(prompt_path, 'r', encoding='utf-8') as file:
             prompt_template = file.read()
-            print_formatted(f"[green]Successfully loaded prompt: {prompt_name}[/green]")
+            if not _is_quiet_mode():
+                print_formatted(f"[green]Successfully loaded prompt: {prompt_name}[/green]")
             return prompt_template
 
     except IOError as e:
