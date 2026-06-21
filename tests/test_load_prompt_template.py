@@ -32,6 +32,25 @@ def test_load_prompt_template_success(monkeypatch):
             # Assert that the file was opened correctly
             mock_file.assert_called_once_with(prompt_path, 'r', encoding='utf-8')
 
+def test_load_prompt_template_quiet_suppresses_success_message(monkeypatch, capsys):
+    prompt_name = "example_prompt"
+    expected_content = "This is a sample prompt template."
+
+    monkeypatch.setenv("PDD_PATH", "/fake/project/path")
+    monkeypatch.setenv("PDD_QUIET", "1")
+
+    prompt_path = Path("/fake/project/path") / "prompts" / f"{prompt_name}.prompt"
+
+    with patch.object(Path, 'exists', return_value=True):
+        with patch("builtins.open", mock_open(read_data=expected_content)) as mock_file:
+            result = load_prompt_template(prompt_name)
+
+            assert result == expected_content
+            mock_file.assert_called_once_with(prompt_path, 'r', encoding='utf-8')
+
+    captured = capsys.readouterr()
+    assert "Successfully loaded prompt" not in captured.out
+
 # Test Case 2: PDD_PATH environment variable is not set
 def test_load_prompt_template_missing_pdd_path(monkeypatch, capsys):
     prompt_name = "example_prompt"
